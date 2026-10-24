@@ -23,6 +23,7 @@
 
 #include "tiled.h"
 
+#include <QEvent>
 #include <QFileDialog>
 #include <QFocusEvent>
 #include <QHBoxLayout>
@@ -33,6 +34,7 @@ namespace Tiled {
 
 FileEdit::FileEdit(QWidget *parent)
     : QWidget(parent)
+    , mButton(new QToolButton(this))
     , mErrorTextColor(Qt::red)
 {
     QHBoxLayout *layout = new QHBoxLayout(this);
@@ -44,12 +46,10 @@ FileEdit::FileEdit(QWidget *parent)
 
     mOkTextColor = mLineEdit->palette().color(QPalette::Active, QPalette::Text);
 
-    QToolButton *button = new QToolButton(this);
-    button->setText(QLatin1String("..."));
-    button->setAutoRaise(true);
-    button->setToolTip(tr("Choose"));
+    mButton->setText(QStringLiteral("…"));
+    mButton->setAutoRaise(true);
     layout->addWidget(mLineEdit);
-    layout->addWidget(button);
+    layout->addWidget(mButton);
 
     setFocusProxy(mLineEdit);
     setFocusPolicy(Qt::StrongFocus);
@@ -59,21 +59,44 @@ FileEdit::FileEdit(QWidget *parent)
             this, &FileEdit::textEdited);
     connect(mLineEdit, &QLineEdit::textChanged,
             this, &FileEdit::validate);
-    connect(button, &QAbstractButton::clicked,
+    connect(mButton, &QAbstractButton::clicked,
             this, &FileEdit::buttonClicked);
+
+    retranslateUi();
+}
+
+void FileEdit::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+
+    if (event->type() == QEvent::LanguageChange)
+        retranslateUi();
+}
+
+void FileEdit::retranslateUi()
+{
+    mButton->setToolTip(tr("Choose"));
 }
 
 void FileEdit::setFileUrl(const QUrl &url)
 {
-    const QString path = url.toString(QUrl::PreferLocalFile);
-    if (mLineEdit->text() != path)
-        mLineEdit->setText(path);
+    setFileName(url.toString(QUrl::PreferLocalFile));
 }
 
 QUrl FileEdit::fileUrl() const
 {
-    const QString path = mLineEdit->text();
-    return Tiled::toUrl(path);
+    return Tiled::toUrl(fileName());
+}
+
+void FileEdit::setFileName(const QString &fileName)
+{
+    if (mLineEdit->text() != fileName)
+        mLineEdit->setText(fileName);
+}
+
+QString FileEdit::fileName() const
+{
+    return mLineEdit->text();
 }
 
 void FileEdit::focusInEvent(QFocusEvent *e)

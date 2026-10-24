@@ -80,6 +80,9 @@ public:
     void setMarkAnimatedTiles(bool enabled);
     bool markAnimatedTiles() const;
 
+    void setRelocateTiles(bool enabled);
+    bool isRelocateTiles() const { return mRelocateTiles; }
+
     void setEditWangSet(bool enabled);
     bool isEditWangSet() const { return mEditWangSet; }
 
@@ -130,7 +133,6 @@ private:
     void applyWangId();
     void finishWangIdChange();
     Tile *currentTile() const;
-    void setHandScrolling(bool handScrolling);
 
     enum WangBehavior {
         AssignWholeId,      // Assigning templates
@@ -147,6 +149,7 @@ private:
     TilesetDocument *mTilesetDocument = nullptr;
     bool mDrawGrid;
     bool mMarkAnimatedTiles = true;
+    bool mRelocateTiles = false;
     bool mEditWangSet = false;
     WrapBehavior mWrapBehavior = WrapDefault;
     WangBehavior mWangBehavior = AssignWholeId;
@@ -155,9 +158,6 @@ private:
     int mWangColorIndex = 0;
     QModelIndex mHoveredIndex;
     bool mWangIdChanged = false;
-
-    bool mHandScrolling = false;
-    QPoint mLastMousePos;
 
     const QIcon mImageMissingIcon;
 };
@@ -173,5 +173,3 @@ inline bool TilesetView::markAnimatedTiles() const
 }
 
 } // namespace Tiled
-
-Q_DECLARE_METATYPE(Tiled::TilesetView *)

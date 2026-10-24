@@ -2,13 +2,13 @@
 
 .. raw:: html
 
-    <div class="new">New in Tiled 1.5</div>
+    <div class="new new-prev">Since Tiled 1.5</div>
 
-GameMaker Studio 2.3
-====================
+GameMaker
+=========
 
-GameMaker Studio 2.3 uses a JSON-based format to store its rooms, and Tiled
-ships with a plugin to export maps in this format.
+GameMaker uses a JSON-based format to store its rooms, and Tiled ships with a
+plugin to export maps in this format.
 
 This plugin will do its best to export the map as accurately as possible,
 mapping Tiled's various features to the matching GameMaker features.
@@ -20,16 +20,13 @@ as background layers.
 
 .. warning::
 
-   Since GameMaker's "Add Existing" action doesn't work at this point in time
-   (2.3.1) the easiest way to export a Tiled map to your GameMaker Project is
-   to replace an already existing ``room.yy`` file.
+   Since it's not possible to add a room to a project by selecting a .yy file,
+   the easiest way to export a Tiled map to your GameMaker project is to create
+   a new room in GameMaker and then overwrite its ``room.yy`` file when
+   exporting from Tiled.
 
-   If you want to do this while GameMaker is running with the open project
-   you'll need to deactivate "Use save writing of files" in the Tiled
-   preferences (Under *Edit -> Preferences -> General -> Saving and Loading*).
-   Otherwise GameMaker will detect that the room file got deleted and will
-   propose to restore it from memory. Without "save writing" GameMaker will
-   detect that the file got changed and propose to reload the updated one.
+   In 2024, GameMaker made minor but incompatible changes to its file format.
+   Tiled 1.11.2 ships with an updated plugin that uses the new format.
 
 .. _yy-asset-references:
 
@@ -40,15 +37,21 @@ Since Tiled currently only exports a map as a GameMaker room, any sprites,
 tilesets and objects used by the map are expected to be already available in
 the GameMaker project.
 
-For sprites, the sprite name is be derived from the image file name by
-removing the file extension. If necessary, the sprite name can be explicitly
-specified using a custom ``sprite`` property (supported on tilesets, tiles
-from image collection tilesets and image layers).
+For sprites, the sprite name is derived by looking for a ``*.yy`` file in the
+directory of the image file and up to two parent directories. If such a file
+is found, it is assumed to be the associated meta file and its name without
+the file extension is used.
+If no ``*.yy`` file can be found, the name of the image file without its file
+extension is used.
+
+If necessary, the sprite name can be explicitly specified using a custom
+``sprite`` property (supported on tilesets, tiles from image collection
+tilesets and image layers).
 
 For tilesets, the tileset name entered in Tiled must match the name of the
 tileset asset in GameMaker.
 
-For object instances, the name of the object should be set in the *Type*
+For object instances, the name of the object should be set in the *Class*
 field.
 
 Exporting a Tiled Map
@@ -85,12 +88,12 @@ Object layers in Tiled are very flexible since objects take so many forms. As
 such the export looks at each object to see how it should be exported to the
 GameMaker room.
 
-When an object has a *Type*, it is exported as an instance on an instance
-layer, where the type refers to the name of the object to instantiate. Except,
-when the type is "view", the object is interpreted as :ref:`a view
+When an object has a *Class*, it is exported as an instance on an instance
+layer, where the class refers to the name of the object to instantiate. Except,
+when the class is "view", the object is interpreted as :ref:`a view
 <yy-views>`.
 
-When an object has no Type, but it is a tile object, then it is exported as
+When an object has no Class, but it is a tile object, then it is exported as
 either a tile graphic or a sprite graphic, depending on whether the tile is
 from a tileset image or a collection of images.
 
@@ -117,8 +120,8 @@ position of the exported instance.
 
 .. hint::
 
-   Of course setting the type and/or the above properties manually for each
-   instance will get old fast. Instead you can use tile objects with the type
+   Of course setting the class and/or the above properties manually for each
+   instance will get old fast. Instead you can use tile objects with the class
    set on the tile or use :doc:`object templates <using-templates>`.
 
 Object Instances
@@ -148,7 +151,7 @@ object.
 
 .. note::
 
-    As of now only variable definitions of the object itself can be overriden.
+    As of now only variable definitions of the object itself can be overridden.
     Overriding variable definitions of parent objects is not supported. As a
     workaround you can use the creation code to override variables of a parent
     object.
@@ -192,15 +195,15 @@ The following custom properties can be set on image layers to affect the
 exported background layers:
 
 * string ``sprite`` (default: based on image filename)
-* bool ``htiled`` (default: false)
-* bool ``vtiled`` (default: false)
+* bool ``htiled`` (default: value of Repeat X property)
+* bool ``vtiled`` (default: value of Repeat Y property)
 * bool ``stretch`` (default: false)
 * float ``hspeed`` (default: 0.0)
 * float ``vspeed`` (default: 0.0)
 * float ``animationFPS`` (default: 15.0)
 * int ``animationSpeedtype`` (default: 0)
 
-Even though the custom properties such as ``htiled`` and ``vtiled`` have no
+Even though the custom properties such as ``hspeed`` and ``vspeed`` have no
 visual effect inside Tiled you will see the effect in the exported room inside
 GameMaker.
 
@@ -289,7 +292,7 @@ Views
 ~~~~~
 
 Views can be defined using :ref:`rectangle objects <insert-rectangle-tool>`
-where the *Type* has been set to "view". The position and size will be snapped
+where the *Class* has been set to "view". The position and size will be snapped
 to pixels. Whether the view is visible when the room starts depends on whether
 the object is visible. The use of views is automatically enabled when any
 views are defined.
@@ -324,7 +327,7 @@ the view object.
 .. hint::
 
    When you're defining views in Tiled, it is useful to add ``view``
-   as object type in the :ref:`Object Types Editor <predefining-properties>`,
+   as class in the :ref:`Custom Types Editor <custom-property-types>`,
    adding the above properties for ease of access. If you frequently use
    views with similar settings, you can set up
    :doc:`templates <using-templates>` for them.

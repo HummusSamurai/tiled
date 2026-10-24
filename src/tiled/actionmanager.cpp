@@ -22,7 +22,9 @@
 
 #include "preferences.h"
 
+#include <QAction>
 #include <QMenu>
+#include <QScopedValueRollback>
 
 namespace Tiled {
 
@@ -51,17 +53,17 @@ void ActionManager::registerAction(QAction *action, Id id)
 {
     auto d = instance();
 
-    Q_ASSERT_X(!d->mIdToActions.contains(id, action), "ActionManager::registerAction", "duplicate action");
+    Q_ASSERT_X(!d->mIdToActions.contains(id, action), "ActionManager::registerAction", "action already registered");
     d->mIdToActions.insert(id, action);
-    d->mLastKnownShortcuts.insert(id, action->shortcut());
+    d->mLastKnownShortcuts.insert(id, action->shortcuts());
 
     connect(action, &QAction::changed, d, [=] {
         if (d->mApplyingToolTipWithShortcut)
             return;
 
-        if (!d->mApplyingShortcut && d->mDefaultShortcuts.contains(id) && d->mLastKnownShortcuts.value(id) != action->shortcut()) {
+        if (!d->mApplyingShortcut && d->mDefaultShortcuts.contains(id) && d->mLastKnownShortcuts.value(id) != action->shortcuts()) {
             // Update remembered default shortcut
-            d->mDefaultShortcuts.insert(id, action->shortcut());
+            d->mDefaultShortcuts.insert(id, action->shortcuts());
 
             // Reset back to user-defined shortcut if set
             if (d->mCustomShortcuts.contains(id)) {
@@ -70,7 +72,7 @@ void ActionManager::registerAction(QAction *action, Id id)
             }
         }
 
-        d->mLastKnownShortcuts.insert(id, action->shortcut());
+        d->mLastKnownShortcuts.insert(id, action->shortcuts());
 
         d->updateToolTipWithShortcut(action);
 
@@ -78,7 +80,7 @@ void ActionManager::registerAction(QAction *action, Id id)
     });
 
     if (d->hasCustomShortcut(id)) {
-        d->mDefaultShortcuts.insert(id, action->shortcut());
+        d->mDefaultShortcuts.insert(id, action->shortcuts());
         d->applyShortcut(action, d->mCustomShortcuts.value(id));
     }
 
@@ -160,6 +162,45 @@ QAction *ActionManager::findAction(Id id)
     return d->mIdToActions.value(id);
 }
 
+/**
+ * Returns whether the action can currently be reached, based on whether any
+ * of the widgets it was added to is visible. This is the same rule Qt applies
+ * when resolving shortcuts, and it is what tells the actions of the map and
+ * tileset editors apart when they share an ID.
+ */
+static bool isReachable(const QAction *action)
+{
+    const auto objects = action->associatedObjects();
+    for (QObject *object : objects)
+        if (auto widget = qobject_cast<QWidget*>(object))
+            if (widget->isVisible())
+                return true;
+
+    return false;
+}
+
+QAction *ActionManager::findEnabledAction(Id id)
+{
+    auto d = instance();
+
+    QAction *fallback = nullptr;
+
+    const auto [start, end] = std::as_const(d->mIdToActions).equal_range(id);
+    for (auto it = start; it != end; ++it) {
+        QAction *action = it.value();
+        if (!action->isEnabled())
+            continue;
+        if (isReachable(action))
+            return action;
+        if (!fallback)
+            fallback = action;
+    }
+
+    // Most actions are only added to a menu, which is not visible unless it
+    // happens to be open, so an unreachable action is still better than none.
+    return fallback;
+}
+
 bool ActionManager::hasMenu(Id id)
 {
     return instance()->mIdToMenu.contains(id);
@@ -183,7 +224,7 @@ void ActionManager::setCustomShortcut(Id id, const QKeySequence &keySequence)
     Q_ASSERT_X(!actions.isEmpty(), "ActionManager::setCustomShortcut", "unknown id");
 
     if (!hasCustomShortcut(id))
-        mDefaultShortcuts.insert(id, actions.first()->shortcut());
+        mDefaultShortcuts.insert(id, actions.first()->shortcuts());
 
     mCustomShortcuts.insert(id, keySequence);
 
@@ -207,26 +248,24 @@ void ActionManager::resetCustomShortcut(Id id)
     const auto actions = mIdToActions.values(id);
     Q_ASSERT_X(!actions.isEmpty(), "ActionManager::resetCustomShortcut", "unknown id");
 
-    mResettingShortcut = true;
+    QScopedValueRollback<bool> resettingShortcut(mResettingShortcut, true);
 
-    const QKeySequence defaultShortcut = mDefaultShortcuts.take(id);
+    const QList<QKeySequence> defaultShortcuts = mDefaultShortcuts.take(id);
     for (QAction *a : actions)
-        applyShortcut(a, defaultShortcut);
+        applyShortcuts(a, defaultShortcuts);
     mCustomShortcuts.remove(id);
-
-    mResettingShortcut = false;
 
     Preferences::instance()->remove(QLatin1String("CustomShortcuts/") + id.toString());
 }
 
 void ActionManager::resetAllCustomShortcuts()
 {
-    QHashIterator<Id, QKeySequence> iterator(mDefaultShortcuts);
+    QHashIterator<Id, QList<QKeySequence>> iterator(mDefaultShortcuts);
     while (iterator.hasNext()) {
         iterator.next();
         const auto actions = mIdToActions.values(iterator.key());
         for (QAction *a : actions)
-            applyShortcut(a, iterator.value());
+            applyShortcuts(a, iterator.value());
     }
     mDefaultShortcuts.clear();
     mCustomShortcuts.clear();
@@ -234,13 +273,13 @@ void ActionManager::resetAllCustomShortcuts()
     Preferences::instance()->remove(QLatin1String("CustomShortcuts"));
 }
 
-QKeySequence ActionManager::defaultShortcut(Id id)
+QList<QKeySequence> ActionManager::defaultShortcuts(Id id) const
 {
     if (mDefaultShortcuts.contains(id))
         return mDefaultShortcuts.value(id);
     if (auto a = findAction(id))
-        return a->shortcut();
-    return QKeySequence();
+        return a->shortcuts();
+    return {};
 }
 
 /**
@@ -248,22 +287,24 @@ QKeySequence ActionManager::defaultShortcut(Id id)
  *
  * Shortcuts that are the same as the default ones will be reset.
  */
-void ActionManager::setCustomShortcuts(const QHash<Id, QKeySequence> &shortcuts)
+void ActionManager::setCustomShortcuts(const QHash<Id, QList<QKeySequence>> &shortcuts)
 {
-    QHashIterator<Id, QKeySequence> iterator(shortcuts);
+    QHashIterator<Id, QList<QKeySequence>> iterator(shortcuts);
     while (iterator.hasNext()) {
         iterator.next();
 
         const Id id = iterator.key();
-        const QKeySequence &shortcut = iterator.value();
+        const QList<QKeySequence> &shortcuts = iterator.value();
 
         if (auto a = findAction(id)) {
-            if (mDefaultShortcuts.contains(id)
-                    ? mDefaultShortcuts.value(id) == shortcut
-                    : a->shortcut() == shortcut) {
+            const auto defaultShortcuts = mDefaultShortcuts.contains(id) ?
+                        mDefaultShortcuts.value(id) : a->shortcuts();
+
+            if (defaultShortcuts == shortcuts) {
                 resetCustomShortcut(id);
             } else {
-                setCustomShortcut(id, shortcut);
+                setCustomShortcut(id, shortcuts.isEmpty() ? QKeySequence()
+                                                          : shortcuts.first());
             }
         }
     }
@@ -285,14 +326,20 @@ void ActionManager::readCustomShortcuts()
 
 void ActionManager::applyShortcut(QAction *action, const QKeySequence &shortcut)
 {
-    mApplyingShortcut = true;
+    QScopedValueRollback<bool> applyingShortcut(mApplyingShortcut, true);
     action->setShortcut(shortcut);
+}
+
+void ActionManager::applyShortcuts(QAction *action, const QList<QKeySequence> &shortcuts)
+{
+    QScopedValueRollback<bool> applyingShortcut(mApplyingShortcut, true);
+    action->setShortcuts(shortcuts);
     mApplyingShortcut = false;
 }
 
 void ActionManager::updateToolTipWithShortcut(QAction *action)
 {
-    mApplyingToolTipWithShortcut = true;
+    QScopedValueRollback<bool> applyingToolTipWithShortcut(mApplyingToolTipWithShortcut, true);
 
     QString toolTip = action->toolTip();
 
@@ -308,8 +355,6 @@ void ActionManager::updateToolTipWithShortcut(QAction *action)
     }
 
     action->setToolTip(toolTip);
-
-    mApplyingToolTipWithShortcut = false;
 }
 
 void ActionManager::applyMenuExtension(QMenu *menu, const ActionManager::MenuExtension &extension)

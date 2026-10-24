@@ -22,15 +22,15 @@
 #pragma once
 
 #include <QObject>
-#include "mapobject.h"
 
 class QAction;
 class QMenu;
 
 namespace Tiled {
 
-class ObjectGroup;
 class MapObject;
+class ObjectGroup;
+class ObjectTemplate;
 
 class MapDocument;
 
@@ -78,6 +78,7 @@ public:
     QAction *actionRemoveLayers() const { return mActionRemoveLayers; }
     QAction *actionSelectPreviousLayer() const { return mActionSelectPreviousLayer; }
     QAction *actionSelectNextLayer() const { return mActionSelectNextLayer; }
+    QAction *actionSelectAllLayers() const { return mActionSelectAllLayers; }
     QAction *actionMoveLayersUp() const { return mActionMoveLayersUp; }
     QAction *actionMoveLayersDown() const { return mActionMoveLayersDown; }
     QAction *actionToggleSelectedLayers() const { return mActionToggleSelectedLayers; }
@@ -91,6 +92,8 @@ public:
 
     QMenu *createNewLayerMenu(QWidget *parent) const;
     QMenu *createGroupLayerMenu(QWidget *parent) const;
+
+    void populateMoveToLayerMenu(QMenu *menu, const ObjectGroup *current);
 
 public slots:
     void cut();
@@ -120,6 +123,7 @@ public slots:
     void mergeLayersDown();
     void selectPreviousLayer();
     void selectNextLayer();
+    void selectAllLayers();
     void moveLayersUp();
     void moveLayersDown();
     void removeLayers();
@@ -160,6 +164,7 @@ private:
     QAction *mActionRemoveLayers;
     QAction *mActionSelectPreviousLayer;
     QAction *mActionSelectNextLayer;
+    QAction *mActionSelectAllLayers;
     QAction *mActionMoveLayersUp;
     QAction *mActionMoveLayersDown;
     QAction *mActionToggleSelectedLayers;

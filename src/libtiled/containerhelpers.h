@@ -29,6 +29,14 @@
 #pragma once
 
 #include <algorithm>
+#include <vector>
+
+/*
+ * These helper functions are necessary with Qt 5, because the QList::indexOf
+ * and QList::contains functions require the argument to be of exactly the
+ * contained type. In Qt 6, they can be different types and just need to be
+ * comparable.
+ */
 
 template<typename Container, typename Value>
 inline int indexOf(const Container &container, Value value)
@@ -43,4 +51,23 @@ inline bool contains(const Container &container, Value value)
     return std::find(container.begin(),
                      container.end(),
                      value) != container.end();
+}
+
+template<typename Container, typename Pred>
+inline bool contains_where(const Container &container, Pred pred)
+{
+    return std::find_if(container.begin(),
+                        container.end(),
+                        pred) != container.end();
+}
+
+// Based on QVector::move, for use with std::vector
+template<typename Value>
+void move(std::vector<Value> &container, size_t from, size_t to)
+{
+    const auto b = container.begin();
+    if (from < to)
+        std::rotate(b + from, b + from + 1, b + to + 1);
+    else
+        std::rotate(b + to, b + from, b + from + 1);
 }

@@ -2,9 +2,9 @@
  * #%L
  * This file is part of libtiled-java.
  * %%
- * Copyright (C) 2004 - 2019 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2004 - 2019 Adam Turk <aturk@biggeruniverse.com>
- * Copyright (C) 2016 - 2019 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2004 - 2020 Adam Turk <aturk@biggeruniverse.com>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -32,14 +32,14 @@ package org.mapeditor.core;
 
 import java.awt.Rectangle;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
 
 /**
  * A layer of a map.
  *
  * @see org.mapeditor.core.Map
- * @version 1.2.3
+ * @version 1.4.2
  */
 @XmlAccessorType(XmlAccessType.NONE)
 public class MapLayer extends LayerData implements Cloneable {

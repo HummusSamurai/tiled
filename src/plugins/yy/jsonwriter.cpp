@@ -26,8 +26,6 @@
 #include <QJsonValue>
 #include <QLocale>
 
-#include <cmath>
-
 namespace Yy {
 
 JsonWriter::JsonWriter(QIODevice *device)
@@ -59,13 +57,16 @@ void JsonWriter::writeStartScope(Scope scope, const char *name)
     m_valueWritten = false;
 }
 
-void JsonWriter::writeEndScope(Scope scope)
+void JsonWriter::writeEndScope(Scope scope, bool forceNewLine)
 {
     Q_ASSERT(m_scopes.last() == scope);
     m_scopes.pop();
     if (m_valueWritten) {
         write(m_valueSeparator);    // This is not JSON-conform, but it's what GameMaker does
-        writeNewline();
+
+        // GameMaker minimization logic
+        if (m_scopes.size() < 2 || forceNewLine)
+            writeNewline(forceNewLine);
     }
     write(scope == Object ? '}' : ']');
     m_newLine = false;
@@ -74,21 +75,10 @@ void JsonWriter::writeEndScope(Scope scope)
 
 void JsonWriter::writeValue(double value)
 {
-    if (qIsFinite(value)) {
-        // Force at least one decimal to avoid double values from being written
-        // as integer, which may confuse GameMaker.
-        if (std::ceil(value) == value) {
-            writeUnquotedValue(QByteArray::number(value, 'f', 1));
-        } else {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 7, 0)
-            writeUnquotedValue(QByteArray::number(value, 'g', QLocale::FloatingPointShortest));
-#else
-            writeUnquotedValue(QByteArray::number(value));
-#endif
-        }
-    } else {
+    if (qIsFinite(value))
+        writeUnquotedValue(QByteArray::number(value, 'g', QLocale::FloatingPointShortest));
+    else
         writeUnquotedValue("null"); // +INF || -INF || NaN (see RFC4627#section2.4)
-    }
 }
 
 void JsonWriter::writeValue(const QByteArray &value)
@@ -118,20 +108,51 @@ void JsonWriter::writeValue(const QJsonValue &value)
         writeValue(value.toString());
         break;
     case QJsonValue::Array: {
-        writeStartArray();
         const QJsonArray array = value.toArray();
+
+        bool arrayContainedObject = false;
+        qsizetype index = 0;
+
+        writeStartArray();
         for (auto v : array) {
-            prepareNewLine();
+            arrayContainedObject |= v.isObject();
+
+            if (m_tileSerialiseWidth > 0) {
+                // force new line when starting a new row of tiles
+                prepareNewLine(index % m_tileSerialiseWidth == 0);
+            } else {
+                // force new line if value is an object
+                prepareNewLine(v.isObject());
+            }
+
             writeValue(v);
+            ++index;
         }
-        writeEndArray();
+        writeEndArray(arrayContainedObject || m_tileSerialiseWidth > 0);
         break;
     }
     case QJsonValue::Object: {
-        writeStartObject();
         const QJsonObject object = value.toObject();
-        for (auto it = object.begin(); it != object.end(); ++it)
-            writeMember(it.key().toLatin1().constData(), it.value());
+
+        // GameMaker 2024 requires the keys to be sorted case-insensitively
+        auto keys = object.keys();
+        keys.sort(Qt::CaseInsensitive);
+
+        writeStartObject();
+        for (const auto &key : std::as_const(keys)) {
+            const auto value = object.value(key);
+
+            const bool writingTiles = key == QLatin1String("tiles");
+            if (writingTiles) {
+                const auto tilesObject = value.toObject();
+                m_tileSerialiseWidth = tilesObject.value(QLatin1String("SerialiseWidth")).toInt();
+            }
+
+            writeMember(key.toLatin1().constData(), value);
+
+            if (writingTiles)
+                m_tileSerialiseWidth = 0;
+        }
         writeEndObject();
         break;
     }
@@ -195,10 +216,23 @@ QString JsonWriter::quote(const QString &str)
 
     for (const QChar c : str) {
         switch (c.unicode()) {
-        case '\\':  quoted.append(QStringLiteral("\\\\"));  break;
-        case '"':   quoted.append(QStringLiteral("\\\""));  break;
-        case '\n':  quoted.append(QStringLiteral("\\n"));   break;
-        default:    quoted.append(c);
+        // Escape common control characters, quotation mark and reverse solidus
+        case '\b': quoted.append(QStringLiteral("\\b"));  break;
+        case '\f': quoted.append(QStringLiteral("\\f"));  break;
+        case '\n': quoted.append(QStringLiteral("\\n"));  break;
+        case '\r': quoted.append(QStringLiteral("\\r"));  break;
+        case '\t': quoted.append(QStringLiteral("\\t"));  break;
+        case '\"': quoted.append(QStringLiteral("\\\"")); break;
+        case '\\': quoted.append(QStringLiteral("\\\\")); break;
+        default:
+            if (c.unicode() < ' ') {
+                // Encode remaining control characters as "\u00.."
+                quoted.append(QStringLiteral("\\u"));
+                quoted.append(QString::number(c.unicode(), 16).rightJustified(4, QLatin1Char('0')));
+            } else {
+                // Any other unicode character should be fine
+                quoted.append(c);
+            }
         }
     }
 
@@ -206,13 +240,13 @@ QString JsonWriter::quote(const QString &str)
     return quoted;
 }
 
-void JsonWriter::prepareNewLine()
+void JsonWriter::prepareNewLine(bool forceNewLine)
 {
     if (m_valueWritten) {
         write(m_valueSeparator);
         m_valueWritten = false;
     }
-    writeNewline();
+    writeNewline(forceNewLine);
 }
 
 void JsonWriter::prepareNewValue()
@@ -229,10 +263,10 @@ void JsonWriter::writeIndent()
         write("  ");
 }
 
-void JsonWriter::writeNewline()
+void JsonWriter::writeNewline(bool force)
 {
     if (!m_newLine) {
-        if (!m_minimize && !m_suppressNewlines) {
+        if (force || (!m_minimize && !m_suppressNewlines && m_scopes.size() < 3)) {
             write('\n');
             writeIndent();
         }
@@ -246,7 +280,7 @@ void JsonWriter::writeKey(const char *key)
     prepareNewLine();
     write('"');
     write(key);
-    write(m_minimize ? "\":" : "\": ");
+    write("\":");
 }
 
 void JsonWriter::write(const char *bytes, qint64 length)

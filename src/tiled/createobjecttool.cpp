@@ -52,7 +52,8 @@ CreateObjectTool::CreateObjectTool(Id id, QObject *parent)
     , mNewMapObjectGroup(new ObjectGroup)
     , mObjectGroupItem(new ObjectGroupItem(mNewMapObjectGroup.get()))
 {
-    mObjectGroupItem->setZValue(10000); // same as the BrushItem
+    mNewMapObjectGroup->setLocked(true);    // prevents selection of preview object
+    mObjectGroupItem->setZValue(10000);     // same as the BrushItem
 }
 
 CreateObjectTool::~CreateObjectTool()
@@ -137,9 +138,10 @@ void CreateObjectTool::mouseMoved(const QPointF &pos,
 void CreateObjectTool::mousePressed(QGraphicsSceneMouseEvent *event)
 {
     if (event->button() == Qt::RightButton) {
-        if (mState == CreatingObject)
+        if (mState == CreatingObject) {
             cancelNewMapObject();
-        return;
+            return;
+        }
     }
 
     if (event->button() != Qt::LeftButton) {
@@ -251,7 +253,7 @@ bool CreateObjectTool::startNewMapObject(const QPointF &pos,
 
     mNewMapObjectGroup->setColor(objectGroup->color());
     mNewMapObjectGroup->setOffset(objectGroup->totalOffset());
-    mNewMapObjectGroup->setParallaxFactor(objectGroup->parallaxFactor());
+    mNewMapObjectGroup->setParallaxFactor(objectGroup->effectiveParallaxFactor());
 
     updateNewObjectGroupItemPos();
 
@@ -340,7 +342,7 @@ void CreateObjectTool::finishNewMapObject()
                                               newMapObject.get());
 
     if (Tileset *tileset = newMapObject.get()->cell().tileset()) {
-        SharedTileset sharedTileset = tileset->sharedPointer();
+        SharedTileset sharedTileset = tileset->sharedFromThis();
 
         // Make sure this tileset is part of the map
         if (!mapDocument()->map()->tilesets().contains(sharedTileset))

@@ -21,14 +21,19 @@
 #pragma once
 
 #include "command.h"
+#include "object.h"
+#include "tiled.h"
+#include "tilededitor_global.h"
 
 #include <QDateTime>
 #include <QStringList>
 #include <QVector>
 
+#include <memory>
+
 namespace Tiled {
 
-class Project
+class TILED_EDITOR_EXPORT Project : public Object
 {
 public:
     Project();
@@ -36,23 +41,27 @@ public:
     const QString &fileName() const;
     bool save();
     bool save(const QString &fileName);
-    bool load(const QString &fileName);
+
+    static std::unique_ptr<Project> load(const QString &fileName);
 
     void addFolder(const QString &folder);
     void removeFolder(int index);
     const QStringList &folders() const;
 
     const QDateTime &lastSaved() const;
+    const SharedPropertyTypes &propertyTypes() const;
 
     QString mExtensionsPath;
     QString mObjectTypesFile;
     QString mAutomappingRulesFile;
     QVector<Command> mCommands;
+    CompatibilityVersion mCompatibilityVersion = Tiled_Current;
 
 private:
     QDateTime mLastSaved;
     QString mFileName;
     QStringList mFolders;
+    SharedPropertyTypes mPropertyTypes;
 };
 
 
@@ -69,6 +78,11 @@ inline const QStringList &Project::folders() const
 inline const QDateTime &Project::lastSaved() const
 {
     return mLastSaved;
+}
+
+inline const SharedPropertyTypes &Project::propertyTypes() const
+{
+    return mPropertyTypes;
 }
 
 } // namespace Tiled

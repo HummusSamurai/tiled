@@ -35,6 +35,7 @@
 #include <QImage>
 
 #include <functional>
+#include <memory>
 
 namespace Tiled {
 
@@ -55,7 +56,8 @@ public:
         DrawGrid                = 0x0010,
         DrawBackground          = 0x0020,
         SmoothPixmapTransform   = 0x0040,
-        IncludeOverhangingTiles = 0x0080
+        IncludeOverhangingTiles = 0x0080,
+        IgnoreOffsetsAndImages  = 0x0100,
     };
 
     Q_DECLARE_FLAGS(RenderFlags, RenderFlag)
@@ -74,12 +76,8 @@ public:
 
 private:
     const Map *mMap;
-    MapRenderer *mRenderer;
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-    QColor mGridColor = Qt::black;
-#else
+    std::unique_ptr<MapRenderer> mRenderer;
     QColor mGridColor = QColorConstants::Black;
-#endif
     RenderObjectLabelCallback mRenderObjectLabelCallback;
 };
 

@@ -33,10 +33,15 @@ class ShapeFillTool : public AbstractTileFillTool
 public:
     ShapeFillTool(QObject *parent = nullptr);
 
+    void activate(MapScene *scene) override;
+    void deactivate(MapScene *scene) override;
+
     void mousePressed(QGraphicsSceneMouseEvent *event) override;
     void mouseReleased(QGraphicsSceneMouseEvent *event) override;
 
     void modifiersChanged(Qt::KeyboardModifiers) override;
+
+    void keyPressed(QKeyEvent *event) override;
 
     void languageChanged() override;
 
@@ -67,7 +72,10 @@ private:
     QAction *mRectFill;
     QAction *mCircleFill;
 
+    void setActionsEnabled(bool enabled);
+
     void setCurrentShape(Shape shape);
+    void cancelMakingShape();
     void updateFillOverlay();
 };
 

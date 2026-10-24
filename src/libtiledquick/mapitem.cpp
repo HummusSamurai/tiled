@@ -22,14 +22,9 @@
 
 #include "tilelayeritem.h"
 
-#include "hexagonalrenderer.h"
-#include "isometricrenderer.h"
 #include "map.h"
-#include "orthogonalrenderer.h"
-#include "staggeredrenderer.h"
+#include "maprenderer.h"
 #include "tilelayer.h"
-
-#include <cmath>
 
 using namespace TiledQuick;
 
@@ -63,6 +58,14 @@ QRectF MapItem::boundingRect() const
         return QRectF();
 
     return mRenderer->mapBoundingRect();
+}
+
+QSize MapItem::tileSize() const
+{
+    if (!mMap)
+        return {0,0};
+
+    return mMap->tileSize();
 }
 
 QPointF MapItem::screenToTileCoords(qreal x, qreal y) const
@@ -155,20 +158,7 @@ void MapItem::refresh()
     if (!mMap)
         return;
 
-    switch (mMap->orientation()) {
-    default:
-        mRenderer = std::make_unique<Tiled::OrthogonalRenderer>(mMap);
-        break;
-    case Tiled::Map::Isometric:
-        mRenderer = std::make_unique<Tiled::IsometricRenderer>(mMap);
-        break;
-    case Tiled::Map::Staggered:
-        mRenderer = std::make_unique<Tiled::StaggeredRenderer>(mMap);
-        break;
-    case Tiled::Map::Hexagonal:
-        mRenderer = std::make_unique<Tiled::HexagonalRenderer>(mMap);
-        break;
-    }
+    mRenderer = Tiled::MapRenderer::create(mMap);
 
     for (Tiled::Layer *layer : mMap->layers()) {
         if (Tiled::TileLayer *tl = layer->asTileLayer()) {

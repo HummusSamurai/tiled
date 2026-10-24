@@ -26,8 +26,8 @@
 
 #include <QCoreApplication>
 
+#include "addremovetileset.h"
 #include "changeevents.h"
-#include "qtcompat_p.h"
 
 using namespace Tiled;
 
@@ -56,11 +56,20 @@ ChangeMapObject::ChangeMapObject(Document *document,
     }
 }
 
+bool ChangeMapObject::mergeWith(const QUndoCommand *other)
+{
+    auto o = static_cast<const ChangeMapObject*>(other);
+    if (mDocument == o->mDocument && mMapObject == o->mMapObject && mProperty == o->mProperty) {
+        setObsolete(mMapObject->mapObjectProperty(mProperty) == mValue);
+        return true;
+    }
+    return false;
+}
+
 void ChangeMapObject::swap()
 {
-    QVariant oldValue = mMapObject->mapObjectProperty(mProperty);
-    mMapObject->setMapObjectProperty(mProperty, mValue);
-    std::swap(mValue, oldValue);
+    const auto value = std::exchange(mValue, mMapObject->mapObjectProperty(mProperty));
+    mMapObject->setMapObjectProperty(mProperty, value);
 
     mMapObject->setPropertyChanged(mProperty, mNewChangeState);
     std::swap(mOldChangeState, mNewChangeState);
@@ -91,9 +100,7 @@ static QList<MapObject*> objectList(const QVector<MapObjectCell> &changes)
 
 void ChangeMapObjectCells::swap()
 {
-    for (int i = 0; i < mChanges.size(); ++i) {
-        MapObjectCell &change = mChanges[i];
-
+    for (auto &change : mChanges) {
         auto cell = change.object->cell();
         change.object->setCell(change.cell);
         change.cell = cell;
@@ -117,7 +124,7 @@ ChangeMapObjectsTile::ChangeMapObjectsTile(Document *document,
     , mMapObjects(mapObjects)
     , mTile(tile)
 {
-    for (MapObject *object : qAsConst(mMapObjects)) {
+    for (MapObject *object : std::as_const(mMapObjects)) {
         Cell cell = object->cell();
         mOldCells.append(cell);
         Tile *tile = cell.tile();
@@ -125,6 +132,14 @@ ChangeMapObjectsTile::ChangeMapObjectsTile(Document *document,
         mUpdateSize.append(tile && object->size() == tile->size());
 
         mOldChangedProperties.append(object->changedProperties());
+    }
+
+    // Make sure the tileset is part of the document
+    if (tile && document->type() == Document::MapDocumentType) {
+        auto mapDocument = static_cast<MapDocument*>(document);
+        SharedTileset sharedTileset = tile->sharedTileset();
+        if (!mapDocument->map()->tilesets().contains(sharedTileset))
+            new AddTileset(mapDocument, sharedTileset, this);
     }
 }
 
@@ -187,6 +202,7 @@ DetachObjects::DetachObjects(Document *document,
 {
     for (const MapObject *object : mapObjects) {
         mObjectTemplates.append(object->objectTemplate());
+        mClassNames.append(object->className());
         mProperties.append(object->properties());
     }
 }
@@ -195,7 +211,7 @@ void DetachObjects::redo()
 {
     QUndoCommand::redo(); // redo child commands
 
-    for (MapObject *object : qAsConst(mMapObjects))
+    for (MapObject *object : std::as_const(mMapObjects))
         object->detachFromTemplate();
 
     emit mDocument->changed(MapObjectsChangeEvent(mMapObjects, MapObject::TemplateProperty));
@@ -206,6 +222,7 @@ void DetachObjects::undo()
     for (int i = 0; i < mMapObjects.size(); ++i) {
         MapObject *object = mMapObjects.at(i);
         object->setObjectTemplate(mObjectTemplates.at(i));
+        object->setClassName(mClassNames.at(i));
         object->setProperties(mProperties.at(i));
         object->syncWithTemplate();
     }
@@ -239,7 +256,8 @@ void ResetInstances::redo()
 
     for (auto object : mMapObjects) {
         // Template instances initially don't hold any custom properties
-        object->clearProperties();
+        if (!object->properties().isEmpty())
+            mDocument->setProperties(object, Properties());
 
         affectedProperties |= object->changedProperties();
 
@@ -249,9 +267,6 @@ void ResetInstances::redo()
     }
 
     emit mDocument->changed(MapObjectsChangeEvent(mMapObjects, affectedProperties));
-
-    // This signal forces updating custom properties in the properties dock
-//    emit mMapDocument->selectedObjectsChanged();
 }
 
 void ResetInstances::undo()
@@ -259,8 +274,14 @@ void ResetInstances::undo()
     MapObject::ChangedProperties affectedProperties = MapObject::CustomProperties;
 
     for (int i = 0; i < mMapObjects.size(); ++i) {
-        mMapObjects.at(i)->copyPropertiesFrom(mOldMapObjects.at(i));
-        affectedProperties |= mOldMapObjects.at(i)->changedProperties();
+        MapObject *object = mMapObjects.at(i);
+        const MapObject *oldObject = mOldMapObjects.at(i);
+
+        object->copyPropertiesFrom(oldObject);
+        affectedProperties |= oldObject->changedProperties();
+
+        if (!oldObject->properties().isEmpty())
+            emit mDocument->propertiesChanged(object);
     }
 
     emit mDocument->changed(MapObjectsChangeEvent(mMapObjects, affectedProperties));
@@ -297,6 +318,9 @@ void ReplaceObjectsWithTemplate::redo()
     }
 
     emit mDocument->changed(MapObjectsChangeEvent(mMapObjects, MapObject::AllProperties));
+
+    for (MapObject *object : std::as_const(mMapObjects))
+        emit mDocument->propertiesChanged(object);
 }
 
 void ReplaceObjectsWithTemplate::undo()
@@ -305,4 +329,7 @@ void ReplaceObjectsWithTemplate::undo()
         mMapObjects.at(i)->copyPropertiesFrom(mOldMapObjects.at(i));
 
     emit mDocument->changed(MapObjectsChangeEvent(mMapObjects, MapObject::AllProperties));
+
+    for (MapObject *object : std::as_const(mMapObjects))
+        emit mDocument->propertiesChanged(object);
 }

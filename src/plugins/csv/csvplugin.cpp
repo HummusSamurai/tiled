@@ -29,6 +29,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 using namespace Tiled;
 using namespace Csv;
@@ -48,7 +49,7 @@ bool CsvPlugin::write(const Map *map, const QString &fileName, Options options)
     Q_UNUSED(options)
 
     // Get file paths for each layer
-    QStringList layerPaths = outputFiles(map, fileName);
+    const QStringList layerPaths = outputFiles(map, fileName);
 
     // Traverse all tile layers
     int currentLayer = 0;
@@ -59,12 +60,14 @@ bool CsvPlugin::write(const Map *map, const QString &fileName, Options options)
 
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
             mError = QCoreApplication::translate("File Errors", "Could not open file for writing.");
+            mError += QLatin1String("\n");
+            mError += layerPaths.at(currentLayer);
             return false;
         }
 
         auto device = file.device();
 
-        QRect bounds = map->infinite() ? tileLayer->bounds() : tileLayer->rect();
+        QRect bounds = map->infinite() ? tileLayer->region().boundingRect() : tileLayer->rect();
         bounds.translate(-layer->position());
 
         // Write out tiles either by ID or their name, if given. -1 is "empty"
@@ -112,6 +115,7 @@ bool CsvPlugin::write(const Map *map, const QString &fileName, Options options)
 
         ++currentLayer;
     }
+
     return true;
 }
 
@@ -122,12 +126,14 @@ QString CsvPlugin::errorString() const
 
 QStringList CsvPlugin::outputFiles(const Tiled::Map *map, const QString &fileName) const
 {
+    const QRegularExpression reservedChars(QStringLiteral("[<>:\"/\\|?*]"));
+
     QStringList result;
 
     // Extract file name without extension and path
     QFileInfo fileInfo(fileName);
     const QString base = fileInfo.completeBaseName();
-    const QString path = fileInfo.path();
+    const QDir dir = fileInfo.dir();
 
     // Loop layers to calculate the path for the exported file
     for (const Layer *layer : map->tileLayers()) {
@@ -139,8 +145,10 @@ QStringList CsvPlugin::outputFiles(const Tiled::Map *map, const QString &fileNam
             layerNames.prepend(QLatin1Char('_'));
         } while ((layer = layer->parentLayer()));
 
+        layerNames.replace(reservedChars, QStringLiteral("_"));
+
         const QString layerFileName = base + layerNames + QLatin1String(".csv");
-        const QString layerFilePath = QDir(path).filePath(layerFileName);
+        const QString layerFilePath = dir.filePath(layerFileName);
 
         result.append(layerFilePath);
     }

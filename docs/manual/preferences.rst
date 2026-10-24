@@ -3,7 +3,7 @@ User Preferences
 
 There are only a few options located in the Preferences, accessible
 though the menu via *Edit > Preferences*. Most other options, like
-whether to draw the grid, what kind snapping to do or the last used
+whether to draw the grid, what kind of snapping to do or the last used
 settings when creating a new map are simply remembered persistently.
 
 The preferences are stored in a system-dependent format and location:
@@ -28,19 +28,13 @@ General
 Saving and Loading
 ~~~~~~~~~~~~~~~~~~
 
-Include DTD reference in saved maps
-    This option is not enabled by default, since it is of very little
-    use whereas it can in some environments cause problems. Feel free to
-    enable it if it helps with validation for example, but note that the
-    referenced DTD is likely out of date (there is a somewhat more up-to-date
-    XSD file available in the repository).
-
 Reload tileset images when they change
     This is very useful while working on the tiles or when the tiles
     might change as a result of a source control system.
 
-Open last files on startup
-    Generally a useful thing to keep enabled.
+Restore previous session on startup
+    When disabled, Tiled always starts with an empty session. This can be
+    useful when you frequently switch projects.
 
 Use safe writing of files
     This setting causes files to be written to a temporary file, and
@@ -49,6 +43,11 @@ Use safe writing of files
     disk space. Unfortunately, it is known to cause issues when saving
     files to a Dropbox folder or a network drive, in which case it helps
     to disable this feature.
+
+Repeat last export on save
+    With this feature enabled, any time you save a map or tileset that was
+    previously exported it will automatically be exported again to the same
+    location and format.
 
 .. raw:: html
 
@@ -73,9 +72,9 @@ Detach templates
     template object files.
 
 Resolve object types and properties
-    Stores effective object type and properties with each object.
+    Stores effective object class and properties with each object.
     Object properties are inherited from a tile (in case of a tile
-    object) and from the default properties of their type.
+    object) and from the members of their class.
 
 Minimize output
     Omits unnecessary whitespace in the output file. This option is supported
@@ -109,7 +108,7 @@ Object line width
 
 .. raw:: html
 
-   <div class="new">New in Tiled 1.5</div>
+   <div class="new new-prev">Since Tiled 1.5</div>
 
 Object selection behavior
     By default the :ref:`select-objects-tool` tool selects objects from any
@@ -137,7 +136,7 @@ Mouse wheel zooms by default
 
 .. raw:: html
 
-   <div class="new">New in Tiled 1.5</div>
+   <div class="new new-prev">Since Tiled 1.5</div>
 
 Middle mouse button uses auto-scrolling
     With this option enabled, the clicking middle mouse button doesn't drag the
@@ -146,7 +145,7 @@ Middle mouse button uses auto-scrolling
 
 .. raw:: html
 
-   <div class="new">New in Tiled 1.5</div>
+   <div class="new new-prev">Since Tiled 1.5</div>
 
 Use smooth scrolling
     This option affects the behavior when scrolling with the arrow keys. When
@@ -205,11 +204,21 @@ available since it is in some cases preferable to the custom style. The
 base color and selection color can't be changed when using this style,
 as they depend on the system.
 
+.. raw:: html
+
+   <div class="new new-prev">Since Tiled 1.10</div>
+
+Custom Interface Font
+~~~~~~~~~~~~~~~~~~~~~
+
+Normally the application font defaults to the one defined by the system. If
+you'd like Tiled to use a different font, you can set one here.
+
 Plugins
 -------
 
 Here you can choose which plugins are enabled, as well as opening the
-:doc:`scripted extensions </reference/scripting>` folder.
+:doc:`scripted extensions </manual/scripting>` folder.
 
 Plugins add support for map and/or tileset file formats. Some generic plugins
 are enabled by default, while more specific ones need to be manually enabled.

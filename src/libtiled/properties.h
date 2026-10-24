@@ -1,6 +1,6 @@
 /*
  * properties.h
- * Copyright 2010, Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright 2010-2021, Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
  *
  * This file is part of libtiled.
  *
@@ -28,7 +28,7 @@
 
 #pragma once
 
-#include "tiled_global.h"
+#include "propertytype.h"
 
 #include <QJsonArray>
 #include <QObject>
@@ -39,42 +39,107 @@ class QDir;
 
 namespace Tiled {
 
+class PropertyType;
+
+class TILEDSHARED_EXPORT PropertyValue
+{
+    Q_GADGET
+    Q_PROPERTY(QVariant value MEMBER value)
+    Q_PROPERTY(int typeId MEMBER typeId)
+    Q_PROPERTY(QString typeName READ typeName)
+
+public:
+    QVariant value;
+    int typeId;
+
+    const PropertyType *type() const;
+    QString typeName() const;
+
+    bool operator==(const PropertyValue &o) const
+    { return typeId == o.typeId && value == o.value; }
+};
+
 class TILEDSHARED_EXPORT FilePath
 {
     Q_GADGET
     Q_PROPERTY(QUrl url MEMBER url)
+    Q_PROPERTY(QString localFile READ localFile WRITE setLocalFile)
 
 public:
     QUrl url;
+
+    QString localFile() const { return url.toLocalFile(); }
+    void setLocalFile(const QString &filePath)
+    { url = QUrl::fromLocalFile(filePath); }
+
+    bool operator==(const FilePath &o) const
+    { return url == o.url; }
 
     static QString toString(const FilePath &path);
     static FilePath fromString(const QString &string);
 };
 
-struct TILEDSHARED_EXPORT ObjectRef
+class TILEDSHARED_EXPORT ObjectRef
 {
     Q_GADGET
     Q_PROPERTY(int id MEMBER id)
 
 public:
-    int id;
+    int id = 0;
+
+    bool operator==(const ObjectRef &o) const
+    { return id == o.id; }
 
     static int toInt(const ObjectRef &ref) { return ref.id; }
     static ObjectRef fromInt(int id) { return ObjectRef { id }; }
 };
 
+class TILEDSHARED_EXPORT ExportContext
+{
+public:
+    enum class RecursiveBehavior {
+        NoRecursion,            // Values are taken as-is. Used by readers and
+                                // writers that walk compound values themselves.
+        ValuesOnly,             // Lua and JSON1 formats (loses types in lists)
+        TypedListValues,        // List elements expanded to {type, propertytype,
+                                // value} maps so the result can be passed
+                                // directly to QJsonValue::fromVariant.
+    };
+
+    explicit ExportContext(const QString &path = QString());
+    ExportContext(const PropertyTypes &types, const QString &path)
+        : mTypes(types)
+        , mPath(path)
+    {}
+
+    // need to prevent this one since we're only holding a reference to the types
+    ExportContext(const PropertyTypes &&types, const QString &path) = delete;
+
+    void setRecursiveBehavior(RecursiveBehavior behavior)
+    { mRecursiveBehavior = behavior; }
+
+    const PropertyTypes &types() const { return mTypes; }
+    const QString &path() const { return mPath; }
+    RecursiveBehavior recursiveBehavior() const { return mRecursiveBehavior; }
+
+    ExportValue toExportValue(const QVariant &value) const;
+    QVariant toPropertyValue(const ExportValue &exportValue) const;
+    QVariant toPropertyValue(const QVariant &value, int metaType) const;
+
+private:
+    const PropertyTypes &mTypes;
+    const QString mPath;
+    RecursiveBehavior mRecursiveBehavior = RecursiveBehavior::NoRecursion;
+};
+
 class TILEDSHARED_EXPORT AggregatedPropertyData
 {
 public:
-    AggregatedPropertyData()
-        : mPresenceCount(0)
-        , mValueConsistent(true)
-    {}
+    AggregatedPropertyData() = default;
 
     explicit AggregatedPropertyData(const QVariant &value)
         : mValue(value)
         , mPresenceCount(1)
-        , mValueConsistent(true)
     {}
 
     void aggregate(const QVariant &value)
@@ -96,8 +161,8 @@ public:
 
 private:
     QVariant mValue;
-    int mPresenceCount;
-    bool mValueConsistent;
+    int mPresenceCount = 0;
+    bool mValueConsistent = true;
 };
 
 /**
@@ -105,33 +170,60 @@ private:
  */
 using Properties = QVariantMap;
 
+
 /**
  * Collection of properties with information about the consistency of their
  * presence and value over several property collections.
  */
 using AggregatedProperties = QMap<QString, AggregatedPropertyData>;
 
+/**
+ * A path element is either a name of a property or an index into an array.
+ */
+using PathElement = std::variant<QString, int>;
+using PropertyPath = QVector<PathElement>;
+
+TILEDSHARED_EXPORT PropertyPath toPropertyPath(const QStringList &path);
+TILEDSHARED_EXPORT QString pathToString(const PropertyPath &path);
+
+TILEDSHARED_EXPORT bool setNestedPropertyValue(QVariant &compoundValue,
+                                               int depth,
+                                               const PropertyPath &path,
+                                               const QVariant &value,
+                                               bool allowReset);
+
+TILEDSHARED_EXPORT bool setPropertyMemberValue(Properties &properties,
+                                               const PropertyPath &path,
+                                               const QVariant &value);
+
 TILEDSHARED_EXPORT void aggregateProperties(AggregatedProperties &aggregated, const Properties &properties);
 TILEDSHARED_EXPORT void mergeProperties(Properties &target, const Properties &source);
 
-TILEDSHARED_EXPORT QJsonArray propertiesToJson(const Properties &properties);
-TILEDSHARED_EXPORT Properties propertiesFromJson(const QJsonArray &json);
+TILEDSHARED_EXPORT QJsonArray propertiesToJson(const Properties &properties,
+                                               const ExportContext &context);
+TILEDSHARED_EXPORT QJsonArray propertiesToJson(const Properties &properties,
+                                               const QString &path = QString());
 
-TILEDSHARED_EXPORT int filePathTypeId();
-TILEDSHARED_EXPORT int objectRefTypeId();
+TILEDSHARED_EXPORT Properties propertiesFromJson(const QJsonArray &json,
+                                                 const ExportContext &context);
+TILEDSHARED_EXPORT Properties propertiesFromJson(const QJsonArray &json,
+                                                 const QString &path = QString());
+
+TILEDSHARED_EXPORT QJsonArray valuesToJson(const QVariantList &values,
+                                           const QString &path = QString());
+TILEDSHARED_EXPORT QVariantList valuesFromJson(const QJsonArray &json,
+                                               const QString &path = QString());
+
+constexpr int propertyValueId() { return qMetaTypeId<PropertyValue>(); }
+constexpr int filePathTypeId() { return qMetaTypeId<FilePath>(); }
+constexpr int objectRefTypeId() { return qMetaTypeId<ObjectRef>(); }
 
 TILEDSHARED_EXPORT QString typeToName(int type);
-TILEDSHARED_EXPORT int nameToType(const QString &name);
-
-TILEDSHARED_EXPORT QVariant toExportValue(const QVariant &value);
-TILEDSHARED_EXPORT QVariant fromExportValue(const QVariant &value, int type);
-
-TILEDSHARED_EXPORT QVariant toExportValue(const QVariant &value, const QDir &dir);
-TILEDSHARED_EXPORT QVariant fromExportValue(const QVariant &value, int type, const QDir &dir);
+TILEDSHARED_EXPORT QString typeName(const QVariant &value);
+TILEDSHARED_EXPORT QString userTypeName(const QVariant &value);
 
 TILEDSHARED_EXPORT void initializeMetatypes();
 
-} // namespace Tiled
+TILEDSHARED_EXPORT QVariantList possiblePropertyValues(const ClassPropertyType *parentClassType = nullptr);
 
-Q_DECLARE_METATYPE(Tiled::FilePath)
-Q_DECLARE_METATYPE(Tiled::ObjectRef)
+} // namespace Tiled

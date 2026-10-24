@@ -30,60 +30,33 @@
 
 #include "minimaprenderer.h"
 
-#include "hexagonalrenderer.h"
 #include "imagelayer.h"
-#include "isometricrenderer.h"
 #include "map.h"
 #include "mapobject.h"
 #include "maprenderer.h"
 #include "objectgroup.h"
-#include "orthogonalrenderer.h"
-#include "staggeredrenderer.h"
 #include "tilelayer.h"
 
 #include <QPainter>
-
-#include "qtcompat_p.h"
 
 using namespace Tiled;
 
 MiniMapRenderer::MiniMapRenderer(const Map *map)
     : mMap(map)
+    , mRenderer(MapRenderer::create(map))
 {
-    switch (map->orientation()) {
-    case Map::Isometric:
-        mRenderer = new IsometricRenderer(map);
-        break;
-    case Map::Staggered:
-        mRenderer = new StaggeredRenderer(map);
-        break;
-    case Map::Hexagonal:
-        mRenderer = new HexagonalRenderer(map);
-        break;
-    case Map::Orthogonal:
-    case Map::Unknown:
-        mRenderer = new OrthogonalRenderer(map);
-        break;
-    }
-
-    mRenderer->setFlag(ShowTileObjectOutlines, false);
+    mRenderer->setFlag(ShowTileAnimations, false);
 }
 
 MiniMapRenderer::~MiniMapRenderer()
 {
-    delete mRenderer;
 }
 
 QSize MiniMapRenderer::mapSize() const
 {
     QRect mapBoundingRect = mRenderer->mapBoundingRect();
-    QSize mapSize = mapBoundingRect.size();
-
-    QMargins margins = mMap->computeLayerOffsetMargins();
-    mapSize.setWidth(mapSize.width() + margins.left() + margins.right());
-    mapSize.setHeight(mapSize.height() + margins.top() + margins.bottom());
-
-    return mapSize;
+    mMap->adjustBoundingRectForOffsetsAndImageLayers(mapBoundingRect);
+    return mapBoundingRect.size();
 }
 
 QImage MiniMapRenderer::render(QSize size, RenderFlags renderFlags) const
@@ -165,10 +138,10 @@ void MiniMapRenderer::renderToImage(QImage &image, RenderFlags renderFlags) cons
     if (renderFlags.testFlag(IncludeOverhangingTiles))
         extendMapRect(mapBoundingRect, *mRenderer);
 
+    if (!renderFlags.testFlag(IgnoreOffsetsAndImages))
+        mMap->adjustBoundingRectForOffsetsAndImageLayers(mapBoundingRect);
+
     QSize mapSize = mapBoundingRect.size();
-    QMargins margins = mMap->computeLayerOffsetMargins();
-    mapSize.setWidth(mapSize.width() + margins.left() + margins.right());
-    mapSize.setHeight(mapSize.height() + margins.top() + margins.bottom());
 
     // Determine the largest possible scale
     const qreal scale = qMin(static_cast<qreal>(image.width()) / mapSize.width(),
@@ -189,7 +162,6 @@ void MiniMapRenderer::renderToImage(QImage &image, RenderFlags renderFlags) cons
 
     painter.translate(centerOffset);
     painter.scale(scale, scale);
-    painter.translate(margins.left(), margins.top());
     painter.translate(-mapBoundingRect.topLeft());
 
     mRenderer->setPainterScale(scale);
@@ -200,13 +172,17 @@ void MiniMapRenderer::renderToImage(QImage &image, RenderFlags renderFlags) cons
             continue;
 
         const auto offset = layer->totalOffset();
+        const auto compositionMode = layer->compositionMode();
 
-        painter.setOpacity(layer->effectiveOpacity());
+        const auto layerOpacity = layer->effectiveOpacity();
+        painter.setOpacity(layerOpacity);
         painter.translate(offset);
 
         switch (layer->layerType()) {
         case Layer::TileLayerType: {
             if (drawTileLayers) {
+                painter.setCompositionMode(compositionMode);
+
                 const TileLayer *tileLayer = static_cast<const TileLayer*>(layer);
                 mRenderer->drawTileLayer(&painter, tileLayer);
             }
@@ -221,8 +197,13 @@ void MiniMapRenderer::renderToImage(QImage &image, RenderFlags renderFlags) cons
                 if (objectGroup->drawOrder() == ObjectGroup::TopDownOrder)
                     std::stable_sort(objects.begin(), objects.end(), objectLessThan);
 
-                for (const MapObject *object : qAsConst(objects)) {
+                for (const MapObject *object : std::as_const(objects)) {
                     if (object->isVisible()) {
+                        if (object->isTileObject())
+                            painter.setCompositionMode(compositionMode);
+                        else
+                            painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
                         if (object->rotation() != qreal(0)) {
                             QPointF origin = mRenderer->pixelToScreenCoords(object->position());
                             painter.save();
@@ -231,8 +212,9 @@ void MiniMapRenderer::renderToImage(QImage &image, RenderFlags renderFlags) cons
                             painter.translate(-origin);
                         }
 
-                        const QColor color = object->effectiveColor();
-                        mRenderer->drawMapObject(&painter, object, color);
+                        painter.setOpacity(layerOpacity * object->opacity());
+
+                        mRenderer->drawMapObject(&painter, object, object->effectiveColors());
 
                         if (object->rotation() != qreal(0))
                             painter.restore();
@@ -243,6 +225,8 @@ void MiniMapRenderer::renderToImage(QImage &image, RenderFlags renderFlags) cons
         }
         case Layer::ImageLayerType: {
             if (drawImageLayers) {
+                painter.setCompositionMode(compositionMode);
+
                 const ImageLayer *imageLayer = static_cast<const ImageLayer*>(layer);
                 mRenderer->drawImageLayer(&painter, imageLayer);
             }

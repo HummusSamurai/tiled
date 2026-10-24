@@ -13,9 +13,11 @@ Project {
         "lua",
         "python",
         "replicaisland",
+        "rpd",
         "rpmap",
         "tbin",
         "tengine",
+        "tscn",
         "yy"
     ]
 }

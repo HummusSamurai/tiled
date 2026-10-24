@@ -21,13 +21,12 @@
 
 #pragma once
 
+#include "changevalue.h"
 #include "tileset.h"
-#include "undocommands.h"
 
 #include <QColor>
 #include <QPoint>
 #include <QSize>
-#include <QUndoCommand>
 
 namespace Tiled {
 
@@ -43,6 +42,9 @@ public:
 
     void undo() override;
     void redo() override;
+
+    int id() const override { return Cmd_ChangeTilesetName; }
+    bool mergeWith(const QUndoCommand *other) override;
 
 private:
     TilesetDocument *mTilesetDocument;
@@ -72,10 +74,7 @@ private:
 
 struct TilesetParameters
 {
-    TilesetParameters()
-        : tileSpacing(0)
-        , margin(0)
-    {}
+    TilesetParameters() = default;
 
     explicit TilesetParameters(const Tileset &tileset);
 
@@ -84,8 +83,8 @@ struct TilesetParameters
     QUrl imageSource;
     QColor transparentColor;
     QSize tileSize;
-    int tileSpacing;
-    int margin;
+    int tileSpacing = 0;
+    int margin = 0;
 };
 
 class ChangeTilesetParameters : public QUndoCommand
@@ -173,6 +172,27 @@ private:
     Alignment mObjectAlignment;
 };
 
+class ChangeTilesetTileRenderSize : public ChangeValue<Tileset, Tileset::TileRenderSize>
+{
+public:
+    ChangeTilesetTileRenderSize(TilesetDocument *tilesetDocument,
+                                Tileset::TileRenderSize tileRenderSize);
+
+protected:
+    Tileset::TileRenderSize getValue(const Tileset *tileset) const override;
+    void setValue(Tileset *tileset, const Tileset::TileRenderSize &tileRenderSize) const override;
+};
+
+class ChangeTilesetFillMode : public ChangeValue<Tileset, Tileset::FillMode>
+{
+public:
+    ChangeTilesetFillMode(TilesetDocument *tilesetDocument,
+                          Tileset::FillMode fillMode);
+
+protected:
+    Tileset::FillMode getValue(const Tileset *tileset) const override;
+    void setValue(Tileset *tileset, const Tileset::FillMode &fillMode) const override;
+};
 
 class ChangeTilesetGridSize : public QUndoCommand
 {

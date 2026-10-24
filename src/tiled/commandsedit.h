@@ -38,7 +38,7 @@ class CommandsEdit : public QWidget
 
 public:
     explicit CommandsEdit(const QVector<Command> &commands, QWidget *parent = nullptr);
-    ~CommandsEdit();
+    ~CommandsEdit() override;
 
     const QVector<Command> &commands() const;
 
@@ -54,6 +54,9 @@ public slots:
 
     void browseExecutable();
     void browseWorkingDirectory();
+
+protected:
+    void changeEvent(QEvent *event) override;
 
 private:
     Ui::CommandsEdit *mUi;

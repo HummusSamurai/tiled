@@ -132,30 +132,62 @@ void LuaTableWriter::writeKeyAndValue(const QByteArray &key,
     m_valueWritten = true;
 }
 
-void LuaTableWriter::writeQuotedKeyAndValue(const QString &key,
-                                            const QVariant &value)
+/**
+ * Writes a quoted key, after which a value is expected to be written (either
+ * a plain value or a table).
+ */
+void LuaTableWriter::writeQuotedKey(const QString &key)
 {
     prepareNewLine();
     write('[');
     write(quote(key).toUtf8());
     write(m_minimize ? "]=" : "] = ");
+}
 
-    switch (value.type()) {
-    case QVariant::Int:
-    case QVariant::UInt:
-    case QVariant::LongLong:
-    case QVariant::ULongLong:
-    case QVariant::Double:
-    case QVariant::Bool:
+void LuaTableWriter::writeQuotedKeyAndValue(const QString &key,
+                                            const QVariant &value)
+{
+    writeQuotedKey(key);
+    writeVariantValue(value);
+}
+
+void LuaTableWriter::writeVariantValue(const QVariant &value)
+{
+    prepareNewLine();
+
+    switch (value.userType()) {
+    case QMetaType::Int:
+    case QMetaType::UInt:
+    case QMetaType::LongLong:
+    case QMetaType::ULongLong:
+    case QMetaType::Double:
+    case QMetaType::Bool:
         write(value.toString().toLatin1());
+        m_newLine = false;
+        m_valueWritten = true;
         break;
-    default:
-        write(quote(value.toString()).toUtf8());
+    case QMetaType::QVariantMap: {
+        writeStartTable();
+        const auto map = value.toMap();
+        for (auto it = map.begin(); it != map.end(); ++it)
+            writeQuotedKeyAndValue(it.key(), it.value());
+        writeEndTable();
         break;
     }
-
-    m_newLine = false;
-    m_valueWritten = true;
+    case QMetaType::QVariantList: {
+        writeStartTable();
+        const auto list = value.toList();
+        for (const auto &item : list)
+            writeVariantValue(item);
+        writeEndTable();
+        break;
+    }
+    default:
+        write(quote(value.toString()).toUtf8());
+        m_newLine = false;
+        m_valueWritten = true;
+        break;
+    }
 }
 
 void LuaTableWriter::writeKeyAndUnquotedValue(const QByteArray &key,

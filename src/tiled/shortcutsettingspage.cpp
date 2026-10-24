@@ -23,6 +23,7 @@
 
 #include "actionmanager.h"
 #include "savefile.h"
+#include "session.h"
 #include "utils.h"
 
 #include <QAbstractListModel>
@@ -30,6 +31,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QEvent>
 #include <QFileDialog>
 #include <QItemEditorFactory>
 #include <QKeyEvent>
@@ -42,8 +44,6 @@
 #include <QXmlStreamWriter>
 
 #include <memory>
-
-#include "qtcompat_p.h"
 
 namespace Tiled {
 
@@ -65,9 +65,10 @@ public:
     explicit ActionsModel(QObject *parent = nullptr);
 
     void setVisible(bool visible);
+    void languageChanged();
 
-    int rowCount(const QModelIndex &parent) const override;
-    int columnCount(const QModelIndex &parent) const override;
+    int rowCount(const QModelIndex &parent = {}) const override;
+    int columnCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
@@ -104,6 +105,18 @@ void ActionsModel::setVisible(bool visible)
     refresh();
 }
 
+void ActionsModel::languageChanged()
+{
+    const int rows = rowCount();
+    const int columns = columnCount();
+
+    emit headerDataChanged(Qt::Horizontal, 0, columns - 1);
+
+    // name and shortcut might be affected by language change
+    if (rows > 0)
+        emit dataChanged(index(0, 1), index(rows - 1, columns - 1));
+}
+
 void ActionsModel::refresh()
 {
     if (!mVisible)
@@ -127,20 +140,27 @@ void ActionsModel::refreshConflicts()
 
     QMultiMap<QKeySequence, Id> actionsByKey;
 
-    for (const auto &actionId : qAsConst(mActions)) {
-        if (auto action = ActionManager::findAction(actionId))
-            if (!action->shortcut().isEmpty())
-                actionsByKey.insert(action->shortcut(), actionId);
+    for (const auto &actionId : std::as_const(mActions)) {
+        if (auto action = ActionManager::findAction(actionId)) {
+            const auto shortcuts = action->shortcuts();
+            for (const auto &shortcut : shortcuts)
+                actionsByKey.insert(shortcut, actionId);
+        }
     }
 
     QVector<bool> conflicts;
     conflicts.reserve(mActions.size());
 
-    for (const auto &actionId : qAsConst(mActions)) {
-        if (auto action = ActionManager::findAction(actionId))
-            conflicts.append(actionsByKey.count(action->shortcut()) > 1);
-        else
+    for (const auto &actionId : std::as_const(mActions)) {
+        if (auto action = ActionManager::findAction(actionId)) {
+            const auto shortcuts = action->shortcuts();
+            conflicts.append(std::any_of(shortcuts.begin(), shortcuts.end(),
+                                         [&] (const QKeySequence &shortcut) {
+                return actionsByKey.count(shortcut) > 1;
+            }));
+        } else {
             conflicts.append(false);
+        }
     }
 
     mConflicts.swap(conflicts);
@@ -199,7 +219,7 @@ QVariant ActionsModel::data(const QModelIndex &index, int role) const
         const Id actionId = mActions.at(index.row());
 
         if (ActionManager::instance()->hasCustomShortcut(actionId)) {
-            QFont font = QApplication::font();
+            QFont font;
             font.setBold(true);
             return font;
         }
@@ -333,8 +353,16 @@ bool KeySequenceFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &
         return QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent);
 
     auto source = sourceModel();
-    auto keySequence = source->data(source->index(sourceRow, 2, sourceParent), Qt::EditRole).value<QKeySequence>();
-    return !keySequence.isEmpty() && mKeySequence.matches(keySequence) != QKeySequence::NoMatch;
+    auto actionId = source->data(source->index(sourceRow, 2, sourceParent), ActionsModel::ActionId).value<Id>();
+
+    if (auto action = ActionManager::findAction(actionId)) {
+        const auto shortcuts = action->shortcuts();
+        for (const auto &shortcut : shortcuts)
+            if (mKeySequence.matches(shortcut) != QKeySequence::NoMatch)
+                return true;
+    }
+
+    return false;
 }
 
 
@@ -447,7 +475,7 @@ ShortcutDelegate::ShortcutDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
     , mItemEditorFactory(new QItemEditorFactory)
 {
-    mItemEditorFactory->registerEditor(QVariant::KeySequence,
+    mItemEditorFactory->registerEditor(QMetaType::QKeySequence,
                                        new QStandardItemEditorCreator<ShortcutEditor>);
 
     setItemEditorFactory(mItemEditorFactory.get());
@@ -626,6 +654,16 @@ QSize ShortcutSettingsPage::sizeHint() const
     return size;
 }
 
+void ShortcutSettingsPage::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+
+    if (event->type() == QEvent::LanguageChange) {
+        ui->retranslateUi(this);
+        mActionsModel->languageChanged();
+    }
+}
+
 void ShortcutSettingsPage::showEvent(QShowEvent *event)
 {
     mActionsModel->setVisible(true);
@@ -640,8 +678,8 @@ void ShortcutSettingsPage::hideEvent(QHideEvent *event)
 
 void ShortcutSettingsPage::refreshConflicts()
 {
-    auto current = ui->shortcutsView->currentIndex();
-    bool conflicts = current.isValid() &&
+    const auto current = ui->shortcutsView->currentIndex();
+    const bool conflicts = current.isValid() &&
             mProxyModel->data(current, ActionsModel::HasConflictingShortcut).toBool();
     ui->conflictsLabel->setVisible(conflicts);
 }
@@ -657,12 +695,17 @@ void ShortcutSettingsPage::searchConflicts()
 
 void ShortcutSettingsPage::importShortcuts()
 {
+    Session &session = Session::current();
+    const QString suggestedFileName = session.lastPath(Session::ShortcutSettingsFile);
+
     QString filter = tr("Keyboard Mapping Scheme (*.kms)");
     QString fileName = QFileDialog::getOpenFileName(this, tr("Import Shortcuts"),
-                                                    QString(), filter);
+                                                    suggestedFileName, filter);
 
     if (fileName.isEmpty())
         return;
+
+    session.setLastPath(Session::ShortcutSettingsFile, fileName);
 
     QFile file(fileName);
     if (!file.open(QFile::ReadOnly | QIODevice::Text)) {
@@ -681,22 +724,19 @@ void ShortcutSettingsPage::importShortcuts()
         return;
     }
 
-    QHash<Id, QKeySequence> result;
+    QHash<Id, QList<QKeySequence>> result;
 
     while (xml.readNextStartElement()) {
         if (xml.name() == QLatin1String("shortcut")) {
             const Id id { xml.attributes().value(QLatin1String("id")).toUtf8() };
+            auto &shortcuts = result[id];
 
             while (xml.readNextStartElement()) {
                 if (xml.name() == QLatin1String("key")) {
-                    QString keyString = xml.attributes().value(QLatin1String("value")).toString();
-                    result.insert(id, QKeySequence(keyString));
-                    xml.skipCurrentElement();   // skip out of "key" element
-                    xml.skipCurrentElement();   // skip out of "shortcut" element
-                    break;
-                } else {
-                    xml.skipCurrentElement();   // skip unknown element
+                    const QString keyString = xml.attributes().value(QLatin1String("value")).toString();
+                    shortcuts.append(QKeySequence(keyString));
                 }
+                xml.skipCurrentElement();       // skip <key> or unknown element
             }
         } else {
             xml.skipCurrentElement();           // skip unknown element
@@ -709,12 +749,17 @@ void ShortcutSettingsPage::importShortcuts()
 
 void ShortcutSettingsPage::exportShortcuts()
 {
-    QString filter = tr("Keyboard Mapping Scheme (*.kms)");
+    Session &session = Session::current();
+    const QString suggestedFileName = session.lastPath(Session::ShortcutSettingsFile);
+
+    const QString filter = tr("Keyboard Mapping Scheme (*.kms)");
     QString fileName = QFileDialog::getSaveFileName(this, tr("Export Shortcuts"),
-                                                    QString(), filter);
+                                                    suggestedFileName, filter);
 
     if (fileName.isEmpty())
         return;
+
+    session.setLastPath(Session::ShortcutSettingsFile, fileName);
 
     SaveFile file(fileName);
 
@@ -741,14 +786,14 @@ void ShortcutSettingsPage::exportShortcuts()
     auto actions = ActionManager::actions();
     std::sort(actions.begin(), actions.end());
 
-    for (Id actionId : qAsConst(actions)) {
+    for (Id actionId : std::as_const(actions)) {
         const auto action = ActionManager::action(actionId);
-        const auto shortcut = action->shortcut();
+        const auto shortcuts = action->shortcuts();
 
         xml.writeStartElement(QStringLiteral("shortcut"));
         xml.writeAttribute(QStringLiteral("id"), actionId.toString());
 
-        if (!shortcut.isEmpty()) {
+        for (const auto &shortcut : shortcuts) {
             xml.writeEmptyElement(QLatin1String("key"));
             xml.writeAttribute(QStringLiteral("value"), shortcut.toString());
         }

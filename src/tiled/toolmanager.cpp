@@ -22,6 +22,7 @@
 
 #include "abstracttool.h"
 #include "actionmanager.h"
+#include "mapdocument.h"
 #include "preferences.h"
 
 #include <QAction>
@@ -42,9 +43,7 @@ ToolManager::ToolManager(QObject *parent)
             this, &ToolManager::retranslateTools);
 }
 
-ToolManager::~ToolManager()
-{
-}
+ToolManager::~ToolManager() = default;
 
 /**
  * Can be used to disable the registration of actions with the ActionManager.
@@ -63,13 +62,24 @@ void ToolManager::setMapDocument(MapDocument *mapDocument)
     if (mMapDocument == mapDocument)
         return;
 
+    if (mMapDocument)
+        mMapDocument->disconnect(this);
+
     mMapDocument = mapDocument;
+
+    if (mMapDocument) {
+        connect(mMapDocument, &MapDocument::currentLayerChanged,
+                this, &ToolManager::currentLayerChanged);
+    }
 
     const auto actions = mActionGroup->actions();
     for (QAction *action : actions) {
-        AbstractTool *tool = action->data().value<AbstractTool*>();
+        auto tool = action->data().value<AbstractTool*>();
         tool->setMapDocument(mapDocument);
     }
+
+    currentLayerChanged(mMapDocument ? mMapDocument->currentLayer()
+                                     : nullptr);
 }
 
 /**
@@ -84,8 +94,9 @@ QAction *ToolManager::registerTool(AbstractTool *tool)
     tool->mToolManager = this;
 
     tool->setMapDocument(mMapDocument);
+    tool->updateEnabledState();
 
-    QAction *toolAction = new QAction(tool->icon(), tool->name(), this);
+    auto toolAction = new QAction(tool->icon(), tool->name(), this);
     toolAction->setShortcut(tool->shortcut());
     toolAction->setData(QVariant::fromValue<AbstractTool*>(tool));
     toolAction->setCheckable(true);
@@ -129,20 +140,23 @@ void ToolManager::unregisterTool(AbstractTool *tool)
 
     tool->disconnect(this);
 
-    if (mDisabledTool == tool)
-        mDisabledTool = nullptr;
-    if (mPreviouslyDisabledTool == tool)
-        mPreviouslyDisabledTool = nullptr;
-    if (mSelectedTool == tool)
-        mSelectedTool = nullptr;
+    QMutableHashIterator<Layer::TypeFlag, AbstractTool *> it(mSelectedToolForLayerType);
+    while (it.hasNext())
+        if (it.next().value() == tool)
+            it.remove();
 
-    selectEnabledTool();
+    if (mSelectedTool == tool)
+        setSelectedTool(nullptr);
+    if (mPreviousSelectedTool == tool)
+        mPreviousSelectedTool = nullptr;
+
+    autoSwitchTool();
 }
 
 /**
  * Selects the given tool. It should be previously added using registerTool().
  *
- * Returns whether the tool was succesfully selected.
+ * Returns whether the tool was successfully selected.
  */
 bool ToolManager::selectTool(AbstractTool *tool)
 {
@@ -165,6 +179,17 @@ bool ToolManager::selectTool(AbstractTool *tool)
         action->setChecked(false);
     setSelectedTool(nullptr);
     return tool == nullptr;
+}
+
+AbstractTool *ToolManager::findTool(Id id)
+{
+    const auto actions = mActionGroup->actions();
+    for (QAction *action : actions) {
+        AbstractTool *abstractTool = action->data().value<AbstractTool*>();
+        if (abstractTool->id() == id)
+            return abstractTool;
+    }
+    return nullptr;
 }
 
 QAction *ToolManager::findAction(AbstractTool *tool) const
@@ -198,7 +223,7 @@ void ToolManager::retranslateTools()
     // Allow the tools to adapt to the new language
     const auto actions = mActionGroup->actions();
     for (QAction *action : actions) {
-        AbstractTool *tool = action->data().value<AbstractTool*>();
+        auto tool = action->data().value<AbstractTool*>();
         tool->languageChanged();
 
         action->setText(tool->name());
@@ -211,6 +236,10 @@ void ToolManager::retranslateTools()
  *
  * This is done to make sure the shortcuts can still be used even when the
  * actions are only added to a tool bar and this tool bar is hidden.
+ *
+ * In addition, this allows us to implement the optional toggle behavior: if the tool is
+ * already selected, pressing the shortcut again will switch to the previously
+ * selected tool.
  */
 void ToolManager::createShortcuts(QWidget *parent)
 {
@@ -229,7 +258,17 @@ void ToolManager::createShortcuts(QWidget *parent)
                 shortcut->setEnabled(action->isEnabled());
             });
 
-            connect(shortcut, &QShortcut::activated, action, &QAction::trigger);
+            connect(shortcut, &QShortcut::activated, action, [this, action] {
+                if (!action->isChecked()) {
+                    // Select the tool associated with this shortcut
+                    action->trigger();
+                } else if (Preferences::instance()->repeatShortcutForPreviousTool()) {
+                    // The tool is already selected, switch to the previously selected tool
+                    auto tool = mPreviousSelectedTool;
+                    if (tool && tool->isVisible())
+                        selectTool(tool);
+                }
+            });
 
             // Limit the context of the shortcut to avoid ambiguous overloads
             action->setShortcutContext(Qt::WidgetShortcut);
@@ -239,7 +278,7 @@ void ToolManager::createShortcuts(QWidget *parent)
 
 void ToolManager::toolEnabledChanged(bool enabled)
 {
-    AbstractTool *tool = qobject_cast<AbstractTool*>(sender());
+    auto tool = qobject_cast<AbstractTool*>(sender());
 
     const auto actions = mActionGroup->actions();
     for (QAction *action : actions) {
@@ -250,49 +289,80 @@ void ToolManager::toolEnabledChanged(bool enabled)
     }
 
     if ((!enabled && tool == mSelectedTool) || (enabled && !mSelectedTool)) {
-        if (mSelectedTool) {
-            mDisabledTool = mSelectedTool;
+        if (mSelectedTool)
             setSelectedTool(nullptr);
-        }
 
-        // Automatically switch to another enabled tool when the current tool
-        // gets disabled. This is done with a delayed call since we first want
-        // all the tools to update their enabled state.
-        if (!mSelectEnabledToolPending) {
-            mSelectEnabledToolPending = true;
-#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
-            QMetaObject::invokeMethod(this, "selectEnabledTool",
-                                      Qt::QueuedConnection);
-#else
-            QMetaObject::invokeMethod(this, &ToolManager::selectEnabledTool,
-                                      Qt::QueuedConnection);
-#endif
-        }
+        scheduleAutoSwitchTool();
     }
 }
 
-void ToolManager::selectEnabledTool()
+/**
+ * Automatically switches to another tool based on the current layer type, or
+ * to the first enabled tool.
+ *
+ * This is done with a delayed call since we first want all the tools to update
+ * their enabled state.
+ */
+void ToolManager::scheduleAutoSwitchTool()
 {
-    mSelectEnabledToolPending = false;
+    if (mAutoSwitchToolPending)
+        return;
 
-    // Avoid changing tools when it's no longer necessary
+    mAutoSwitchToolPending = true;
+
+    QMetaObject::invokeMethod(this, &ToolManager::autoSwitchTool,
+                              Qt::QueuedConnection);
+}
+
+void ToolManager::autoSwitchTool()
+{
+    mAutoSwitchToolPending = false;
+
+    // Select the previous tool that was selected for this layer type
+    if (mLayerType) {
+        const auto layerType = static_cast<Layer::TypeFlag>(mLayerType);
+        if (auto tool = mSelectedToolForLayerType.value(layerType)) {
+            if (tool->isEnabled()) {
+                selectTool(tool);
+                return;
+            }
+        }
+    }
+
+    // Avoid changing tools when it's not absolutely necessary
     if (mSelectedTool && mSelectedTool->isEnabled())
         return;
 
-    // Prefer the tool we switched away from last time
-    if (mPreviouslyDisabledTool && mPreviouslyDisabledTool->isEnabled())
-        selectTool(mPreviouslyDisabledTool);
-    else
-        selectTool(firstEnabledTool());
+    selectTool(firstEnabledTool());
+}
 
-    mPreviouslyDisabledTool = mDisabledTool;
+void ToolManager::currentLayerChanged(Layer *layer)
+{
+    const int layerType = layer ? layer->layerType() : 0;
+
+    if (mLayerType != layerType) {
+        // Remember the selected tool for the current layer type
+        if (mLayerType && mSelectedTool && !mAutoSwitchToolPending) {
+            mSelectedToolForLayerType.insert(static_cast<Layer::TypeFlag>(mLayerType),
+                                             mSelectedTool);
+        }
+
+        mLayerType = layerType;
+        scheduleAutoSwitchTool();
+    }
+
+    const auto actions = mActionGroup->actions();
+    for (QAction *action : actions) {
+        auto *tool = action->data().value<AbstractTool*>();
+        tool->updateEnabledState();
+    }
 }
 
 AbstractTool *ToolManager::firstEnabledTool() const
 {
     const auto actions = mActionGroup->actions();
     for (QAction *action : actions)
-        if (AbstractTool *tool = action->data().value<AbstractTool*>())
+        if (auto tool = action->data().value<AbstractTool*>())
             if (tool->isEnabled() && tool->isVisible())
                 return tool;
 
@@ -307,6 +377,9 @@ void ToolManager::setSelectedTool(AbstractTool *tool)
     if (mSelectedTool) {
         disconnect(mSelectedTool, &AbstractTool::statusInfoChanged,
                    this, &ToolManager::statusInfoChanged);
+
+        if (mSelectedTool->isVisible())
+            mPreviousSelectedTool = mSelectedTool;
     }
 
     mSelectedTool = tool;

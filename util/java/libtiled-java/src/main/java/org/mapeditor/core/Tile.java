@@ -2,9 +2,9 @@
  * #%L
  * This file is part of libtiled-java.
  * %%
- * Copyright (C) 2004 - 2019 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2004 - 2019 Adam Turk <aturk@biggeruniverse.com>
- * Copyright (C) 2016 - 2019 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2004 - 2020 Adam Turk <aturk@biggeruniverse.com>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -34,13 +34,13 @@ import java.awt.image.BufferedImage;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
 
 /**
  * The core class for our tiles.
  *
- * @version 1.2.3
+ * @version 1.4.2
  */
 @XmlAccessorType(XmlAccessType.NONE)
 public class Tile extends TileData {
@@ -174,6 +174,28 @@ public class Tile extends TileData {
      */
     public void setSource(String source) {
         this.source = source;
+    }
+
+    /**
+     * Sets the collision object group for this tile.
+     *
+     * @param og the object group defining collision shapes
+     */
+    public void setObjectGroup(ObjectGroup og) {
+        getObjectgroup().clear();
+        getObjectgroup().add(og);
+    }
+
+    /**
+     * Gets the collision object group for this tile, if any.
+     *
+     * @return the first ObjectGroup, or null
+     */
+    public ObjectGroup getCollisionObjectGroup() {
+        if (objectgroup != null && !objectgroup.isEmpty()) {
+            return (ObjectGroup) objectgroup.get(0);
+        }
+        return null;
     }
 
     /** {@inheritDoc} */

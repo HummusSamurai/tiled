@@ -49,10 +49,10 @@ public:
                          const QString &name,
                          const QIcon &icon,
                          const QKeySequence &shortcut,
-                         BrushItem *brushItem = nullptr,
                          QObject *parent = nullptr);
     ~AbstractTileFillTool() override;
 
+    void activate(MapScene *scene) override;
     void deactivate(MapScene *scene) override;
 
     void mousePressed(QGraphicsSceneMouseEvent *event) override;
@@ -93,6 +93,7 @@ protected:
     virtual void clearConnections(MapDocument *mapDocument) = 0;
 
     void updatePreview(const QRegion &fillRegion);
+    bool applyPreview(const QString &text);
 
     void clearOverlay();
 

@@ -25,8 +25,9 @@
 
 #include "mapformat.h"
 
-#include <QObject>
 #include <QMap>
+#include <QObject>
+#include <QTextStream>
 
 namespace Flare {
 
@@ -48,6 +49,10 @@ public:
     QString errorString() const override;
 
 private:
+    void writeProperties(QTextStream &out,
+                         const Tiled::Properties &properties,
+                         const Tiled::ExportContext &context);
+
     QString mError;
 };
 

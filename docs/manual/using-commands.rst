@@ -4,9 +4,9 @@ Using Commands
 The Command Button allows you to create and run shell commands (other
 programs) from Tiled.
 
-You may setup as many commands as you like. This is useful if you edit
+You may set up as many commands as you like. This is useful if you edit
 maps for multiple games and you want to set up a command for each game.
-Or you could setup multiple commands for the same game that load
+Or you could set up multiple commands for the same game that load
 different checkpoints or configurations.
 
 The Command Button
@@ -46,10 +46,10 @@ Shortcut
     A custom key sequence to trigger the command. You can use 'Clear'
     to reset the shortcut.
 
-Output in Debug Console
+Show output in Console view
     If this is enabled, then the output (stdout and stderr) of this
-    command will be displayed in the Debug Console. You can find the
-    Debug Console in *View > Views and Toolbars > Debug Console*.
+    command will be displayed in the Console. You can find the
+    Console in *View > Views and Toolbars > Console*.
 
 Save map before executing
     If this is enabled, then the current map will be saved before
@@ -74,6 +74,12 @@ the following variables:
 ``%mappath``
     the path in which the current file is located.
 
+``%exportfile``
+    the full path to which the current file was last exported, or an empty string if the file has not yet been exported.
+
+``%exportpath``
+    the path in which the last export is located, or an empty string if the file has not yet been exported.
+
 .. raw:: html
 
    <div class="new new-prev">Since Tiled 1.4</div>
@@ -81,8 +87,9 @@ the following variables:
 ``%projectpath``
     the path in which the current project is located.
 
-``%objecttype``
-    the type of the currently selected object, if any.
+``%objectclass``
+    the class of the currently selected object, if any (also available as
+    ``%objecttype`` for compatibility with Tiled < 1.9).
 
 ``%objectid``
     the ID of the currently selected object, if any.
@@ -92,10 +99,17 @@ the following variables:
 
 .. raw:: html
 
-   <div class="new">New in Tiled 21.4</div>
+   <div class="new new-prev">Since Tiled 1.6</div>
 
 ``%tileid``
     a comma-separated list with the IDs of the selected tiles, if any.
+
+.. raw:: html
+
+   <div class="new new-prev">Since Tiled 1.9</div>
+
+``%worldfile``
+    the full path of the world the current map is part of, if any.
 
 For the working directory field, you can additionally use the following
 variable:

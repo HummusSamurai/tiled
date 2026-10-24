@@ -64,11 +64,11 @@ public slots:
     void bringToFront();
 
 protected:
+    void changeEvent(QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
 
     void focusInEvent(QFocusEvent *event) override;
-    void focusOutEvent(QFocusEvent *event) override;
 
 private:
     void setTemplate(ObjectTemplate *objectTemplate);
@@ -94,8 +94,8 @@ private:
     MapDocumentPtr mDummyMapDocument;
     MapScene *mMapScene;
     MapView *mMapView;
-    ObjectTemplate *mObjectTemplate;
-    PropertiesDock *mPropertiesDock;
+    ObjectTemplate *mObjectTemplate = nullptr;
+    PropertiesDock *mPropertiesDock = nullptr;
     ToolManager *mToolManager;
 
     static QHash<ObjectTemplate*, QWeakPointer<MapDocument>> ourDummyDocuments;

@@ -2,9 +2,9 @@
  * #%L
  * This file is part of libtiled-java.
  * %%
- * Copyright (C) 2004 - 2019 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2004 - 2019 Adam Turk <aturk@biggeruniverse.com>
- * Copyright (C) 2016 - 2019 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2004 - 2020 Adam Turk <aturk@biggeruniverse.com>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -37,15 +37,15 @@ import java.awt.Rectangle;
 import java.awt.geom.Area;
 import java.util.HashMap;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
 
 /**
  * A TileLayer is a specialized Layer, used for tracking two dimensional tile
  * data.
  *
  * @see org.mapeditor.core.Map
- * @version 1.2.3
+ * @version 1.4.2
  */
 @XmlAccessorType(XmlAccessType.NONE)
 public class TileLayer extends TileLayerData {
@@ -558,5 +558,17 @@ public class TileLayer extends TileLayerData {
     public boolean isFlippedDiagonally(int x, int y) {
         return getBounds().contains(x, y) &&
                 (flags[y][x] & (int)TMXMapReader.FLIPPED_DIAGONALLY_FLAG) != 0;
+    }
+
+    /**
+     * Check if tile at (x, y) is rotated 120 degrees (hexagonal maps)
+     *
+     * @param x Tile-space x coordinate
+     * @param y Tile-space y coordinate
+     * @return <code>true</code> if tile at (x, y) has hexagonal 120 rotation flag
+     */
+    public boolean isRotatedHexagonal120(int x, int y) {
+        return getBounds().contains(x, y) &&
+                (flags[y][x] & (int)TMXMapReader.ROTATED_HEXAGONAL_120_FLAG) != 0;
     }
 }

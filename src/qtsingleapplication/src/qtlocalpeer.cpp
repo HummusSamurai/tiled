@@ -42,11 +42,19 @@
 #include "qtlocalpeer.h"
 #include <QCoreApplication>
 #include <QDataStream>
+#include <QDir>
+#include <QLocalSocket>
 #include <QRegularExpression>
-#include <QTime>
 
 #if defined(Q_OS_WIN)
 #include <QLibrary>
+
+// Needed to avoid include issue when compiling with mingw_900
+#if QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 #include <qt_windows.h>
 typedef BOOL(WINAPI*PProcessIdToSessionId)(DWORD,DWORD*);
 static PProcessIdToSessionId pProcessIdToSessionId = 0;
@@ -56,15 +64,6 @@ static PProcessIdToSessionId pProcessIdToSessionId = 0;
 #include <time.h>
 #include <unistd.h>
 #endif
-
-namespace QtLP_Private {
-#include "qtlockedfile.cpp"
-#if defined(Q_OS_WIN)
-#include "qtlockedfile_win.cpp"
-#else
-#include "qtlockedfile_unix.cpp"
-#endif
-}
 
 const char* QtLocalPeer::ack = "ack";
 
@@ -109,22 +108,19 @@ QtLocalPeer::QtLocalPeer(QObject* parent, const QString &appId)
     QString lockName = QDir(QDir::tempPath()).absolutePath()
                        + QLatin1Char('/') + socketName
                        + QLatin1String("-lockfile");
-    lockFile.setFileName(lockName);
-    lockFile.open(QIODevice::ReadWrite);
+    lockFile.reset(new QLockFile(lockName));
 }
-
-
 
 bool QtLocalPeer::isClient()
 {
-    if (lockFile.isLocked())
+    if (lockFile->isLocked())
         return false;
 
-    if (!lockFile.lock(QtLP_Private::QtLockedFile::WriteLock, false))
+    if (!lockFile->tryLock())
         return true;
 
     bool res = server->listen(socketName);
-#if defined(Q_OS_UNIX) && (QT_VERSION >= QT_VERSION_CHECK(4,5,0))
+#if defined(Q_OS_UNIX)
     // ### Workaround
     if (!res && server->serverError() == QAbstractSocket::AddressInUseError) {
         QFile::remove(QDir::cleanPath(QDir::tempPath())+QLatin1Char('/')+socketName);

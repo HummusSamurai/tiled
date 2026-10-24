@@ -20,39 +20,61 @@
 
 #include "document.h"
 
+#include "changeevents.h"
+#include "containerhelpers.h"
+#include "documentmanager.h"
 #include "editableasset.h"
 #include "logginginterface.h"
 #include "object.h"
 #include "tile.h"
+#include "undocommands.h"
+#include "wangset.h"
 
 #include <QFileInfo>
 #include <QUndoStack>
 
 namespace Tiled {
 
-QHash<QString, Document*> Document::sDocumentInstances;
-
 Document::Document(DocumentType type, const QString &fileName,
                    QObject *parent)
     : QObject(parent)
     , mType(type)
     , mFileName(fileName)
-    , mCanonicalFilePath(QFileInfo(mFileName).canonicalFilePath())
     , mUndoStack(new QUndoStack(this))
 {
-    if (!mCanonicalFilePath.isEmpty())
-        sDocumentInstances.insert(mCanonicalFilePath, this);
+    const QFileInfo fileInfo { fileName };
+    mLastSaved = fileInfo.lastModified();
+    mCanonicalFilePath = fileInfo.canonicalFilePath();
+    mReadOnly = fileInfo.exists() && !fileInfo.isWritable();
 
-    connect(mUndoStack, &QUndoStack::cleanChanged, this, &Document::modifiedChanged);
+    if (auto manager = DocumentManager::maybeInstance())
+        manager->registerDocument(this);
+
+    connect(mUndoStack, &QUndoStack::indexChanged, this, &Document::updateIsModified);
+    connect(mUndoStack, &QUndoStack::cleanChanged, this, &Document::updateIsModified);
 }
 
 Document::~Document()
 {
-    if (!mCanonicalFilePath.isEmpty()) {
-        auto i = sDocumentInstances.find(mCanonicalFilePath);
-        if (i != sDocumentInstances.end() && *i == this)
-            sDocumentInstances.erase(i);
-    }
+    // Disconnect early to avoid being called on our own destroy signal
+    if (mCurrentObjectDocument)
+        mCurrentObjectDocument->disconnect(this);
+
+    if (auto manager = DocumentManager::maybeInstance())
+        manager->unregisterDocument(this);
+}
+
+EditableAsset *Document::editable()
+{
+    if (!mEditable)
+        mEditable = createEditable();
+    return mEditable.get();
+}
+
+void Document::setEditable(std::unique_ptr<EditableAsset> editable)
+{
+    mEditable = std::move(editable);
+    mEditable->setDocument(this);
 }
 
 void Document::setFileName(const QString &fileName)
@@ -62,24 +84,21 @@ void Document::setFileName(const QString &fileName)
 
     QString oldFileName = mFileName;
 
-    if (!mCanonicalFilePath.isEmpty()) {
-        auto i = sDocumentInstances.find(mCanonicalFilePath);
-        if (i != sDocumentInstances.end() && *i == this)
-            sDocumentInstances.erase(i);
-    }
+    DocumentManager::instance()->unregisterDocument(this);
 
+    const QFileInfo fileInfo { fileName };
     mFileName = fileName;
-    mCanonicalFilePath = QFileInfo(fileName).canonicalFilePath();
+    mCanonicalFilePath = fileInfo.canonicalFilePath();
+    setReadOnly(fileInfo.exists() && !fileInfo.isWritable());
 
-    if (!mCanonicalFilePath.isEmpty())
-        sDocumentInstances.insert(mCanonicalFilePath, this);
+    DocumentManager::instance()->registerDocument(this);
 
     emit fileNameChanged(fileName, oldFileName);
 }
 
 void Document::checkFilePathProperties(const Object *object) const
 {
-    auto &props = object->properties();
+    const auto &props = object->properties();
 
     for (auto i = props.begin(), i_end = props.end(); i != i_end; ++i) {
         if (i.value().userType() == filePathTypeId()) {
@@ -94,20 +113,136 @@ void Document::checkFilePathProperties(const Object *object) const
 }
 
 /**
- * Returns whether the document has unsaved changes.
+ * Sets the current \a object alongside the document owning that object.
+ *
+ * The owning document is necessary because the current object reference may
+ * need to be reset to prevent it from turning into a roaming pointer.
  */
-bool Document::isModified() const
+void Document::setCurrentObject(Object *object, Document *owningDocument)
 {
-    return !undoStack()->isClean();
-}
-
-void Document::setCurrentObject(Object *object)
-{
-    if (object == mCurrentObject)
+    if (object == mCurrentObject) {
+        emit currentObjectSet(object);
         return;
+    }
 
     mCurrentObject = object;
+
+    if (!object)
+        owningDocument = nullptr;
+
+    if (mCurrentObjectDocument != owningDocument) {
+        if (mCurrentObjectDocument) {
+            disconnect(mCurrentObjectDocument, &QObject::destroyed, this, &Document::currentObjectDocumentDestroyed);
+            disconnect(mCurrentObjectDocument, &Document::changed, this, &Document::currentObjectDocumentChanged);
+        }
+        if (owningDocument) {
+            connect(owningDocument, &QObject::destroyed, this, &Document::currentObjectDocumentDestroyed);
+            connect(owningDocument, &Document::changed, this, &Document::currentObjectDocumentChanged);
+        }
+
+        mCurrentObjectDocument = owningDocument;
+    }
+
+    emit currentObjectSet(object);
     emit currentObjectChanged(object);
+    emit currentObjectsChanged();
+}
+
+/**
+ * Resets the current object when necessary.
+ *
+ * For some changes we'll need to reset the current object. At the moment, this
+ * function only handles those cases where the change comes from a different
+ * document. For example, the current object of a MapDocument might be a tile
+ * from a TilesetDocument. To avoid leaving a roaming pointer, it will need to
+ * be reset when that tile is removed.
+ */
+void Document::currentObjectDocumentChanged(const ChangeEvent &change)
+{
+    switch (change.type) {
+    case ChangeEvent::DocumentAboutToReload:
+        setCurrentObject(nullptr);
+        break;
+
+    case ChangeEvent::TilesAboutToBeRemoved: {
+        auto tilesEvent = static_cast<const TilesEvent&>(change);
+
+        if (contains(tilesEvent.tiles, currentObject()))
+            setCurrentObject(nullptr);
+
+        break;
+    }
+    case ChangeEvent::WangSetAboutToBeRemoved: {
+        auto wangSetEvent = static_cast<const WangSetEvent&>(change);
+        auto wangSet = wangSetEvent.tileset->wangSet(wangSetEvent.index);
+
+        if (currentObject() == wangSet)
+            setCurrentObject(nullptr);
+        if (currentObject() && currentObject()->typeId() == Object::WangColorType)
+            if (static_cast<WangColor*>(currentObject())->wangSet() == wangSet)
+                setCurrentObject(nullptr);
+
+        break;
+    }
+    case ChangeEvent::WangColorAboutToBeRemoved: {
+        auto wangColorEvent = static_cast<const WangColorEvent&>(change);
+        auto wangColor = wangColorEvent.wangSet->colorAt(wangColorEvent.color);
+
+        if (currentObject() == wangColor.data())
+            setCurrentObject(nullptr);
+
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void Document::currentObjectDocumentDestroyed()
+{
+    mCurrentObjectDocument = nullptr;   // don't need to disconnect from this
+    setCurrentObject(nullptr);
+}
+
+bool Document::isModifiedImpl() const
+{
+    const QUndoStack &undo = *undoStack();
+    const int cleanIndex = undo.cleanIndex();
+    bool modified = !undo.isClean();
+
+    if (modified && cleanIndex != -1) {
+        modified = false;
+
+        // if cleanIndex is 2 and index is 5, we check commands 4 to 2
+        int from = undo.index() - 1;
+        int to = cleanIndex;
+
+        // if cleanIndex is 2 but index is 0, we check commands 1 to 0
+        if (from < to) {
+            to = undo.index();
+            from = cleanIndex - 1;
+        }
+
+        for (int index = from; index >= to; --index) {
+            const QUndoCommand *command = undo.command(index);
+            if (command->id() != Cmd_ChangeSelectedArea) {
+                modified = true;
+                break;
+            }
+        }
+    }
+
+    return modified;
+}
+
+void Document::updateIsModified()
+{
+    const bool modified = isModifiedImpl();
+
+    if (mModified != modified) {
+        mModified = modified;
+        emit modifiedChanged();
+    }
 }
 
 QList<Object *> Document::currentObjects() const
@@ -130,6 +265,31 @@ void Document::setProperty(Object *object,
         emit propertyChanged(object, name);
     else
         emit propertyAdded(object, name);
+}
+
+void Document::setPropertyMember(Object *object,
+                                 const PropertyPath &path,
+                                 const QVariant &value)
+{
+    Q_ASSERT(!path.isEmpty());
+
+    const auto &topLevelEntry = path.first();
+    Q_ASSERT(std::holds_alternative<QString>(topLevelEntry));
+
+    auto &topLevelName = std::get<QString>(topLevelEntry);
+
+    if (path.size() == 1) {
+        setProperty(object, topLevelName, value);
+        return;
+    }
+
+    // Take the resolved property since we may not have this property yet
+    // when we want to override it with a changed member.
+    auto topLevelValue = object->resolvedProperty(topLevelName);
+    if (!setNestedPropertyValue(topLevelValue, 1, path, value, false))
+        return;
+
+    setProperty(object, topLevelName, topLevelValue);
 }
 
 void Document::setProperties(Object *object, const Properties &properties)
@@ -156,6 +316,15 @@ void Document::setIgnoreBrokenLinks(bool ignoreBrokenLinks)
 void Document::setChangedOnDisk(bool changedOnDisk)
 {
     mChangedOnDisk = changedOnDisk;
+}
+
+void Document::setReadOnly(bool readOnly)
+{
+    if (mReadOnly == readOnly)
+        return;
+
+    mReadOnly = readOnly;
+    emit isReadOnlyChanged(readOnly);
 }
 
 } // namespace Tiled

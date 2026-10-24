@@ -23,23 +23,23 @@
 #include "actionmanager.h"
 #include "addremovemapobject.h"
 #include "changetileobjectgroup.h"
+#include "createcapsuleobjecttool.h"
 #include "createellipseobjecttool.h"
 #include "createobjecttool.h"
 #include "createpointobjecttool.h"
 #include "createpolygonobjecttool.h"
 #include "createrectangleobjecttool.h"
 #include "createtemplatetool.h"
-#include "editablemanager.h"
 #include "editablemapobject.h"
 #include "editpolygontool.h"
 #include "layermodel.h"
 #include "map.h"
 #include "mapdocument.h"
-#include "mapdocumentactionhandler.h"
 #include "mapobject.h"
 #include "mapscene.h"
 #include "mapview.h"
 #include "objectgroup.h"
+#include "objectreferencetool.h"
 #include "objectselectiontool.h"
 #include "objectsview.h"
 #include "preferences.h"
@@ -76,7 +76,7 @@ static Preference<QByteArray> splitterState { "TileCollisionDock/SplitterState" 
 TileCollisionDock::TileCollisionDock(QWidget *parent)
     : QDockWidget(parent)
     , mMapScene(new MapScene(this))
-    , mMapView(new MapView(this, MapView::NoStaticContents))
+    , mMapView(new MapView(this))
     , mObjectsView(new ObjectsView(this))
     , mToolManager(new ToolManager(this))
 {
@@ -93,6 +93,7 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
     CreateObjectTool *rectangleObjectsTool = new CreateRectangleObjectTool(this);
     CreateObjectTool *pointObjectsTool = new CreatePointObjectTool(this);
     CreateObjectTool *ellipseObjectsTool = new CreateEllipseObjectTool(this);
+    CreateObjectTool *capsuleObjectsTool = new CreateCapsuleObjectTool(this);
     CreateObjectTool *polygonObjectsTool = new CreatePolygonObjectTool(this);
     CreateObjectTool *templatesTool = new CreateTemplateTool(this);
 
@@ -112,10 +113,12 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
 
     mToolManager = new ToolManager(this);
     toolsToolBar->addAction(mToolManager->registerTool(new ObjectSelectionTool(this)));
+    toolsToolBar->addAction(mToolManager->registerTool(new ObjectReferenceTool(this)));
     toolsToolBar->addAction(mToolManager->registerTool(new EditPolygonTool(this)));
     toolsToolBar->addAction(mToolManager->registerTool(rectangleObjectsTool));
     toolsToolBar->addAction(mToolManager->registerTool(pointObjectsTool));
     toolsToolBar->addAction(mToolManager->registerTool(ellipseObjectsTool));
+    toolsToolBar->addAction(mToolManager->registerTool(capsuleObjectsTool));
     toolsToolBar->addAction(mToolManager->registerTool(polygonObjectsTool));
     toolsToolBar->addAction(mToolManager->registerTool(templatesTool));
     toolsToolBar->addSeparator();
@@ -230,6 +233,7 @@ TileCollisionDock::TileCollisionDock(QWidget *parent)
     retranslateUi();
     selectedObjectsChanged();   // disables actions
 
+    ActionManager::registerAction(mActionAutoDetectMask, "AutoDetectMask");
     ActionManager::registerAction(mActionDuplicateObjects, "DuplicateObjects");
     ActionManager::registerAction(mActionRemoveObjects, "RemoveObjects");
     ActionManager::registerAction(mActionMoveUp, "MoveObjectsUp");
@@ -252,14 +256,13 @@ void TileCollisionDock::autoDetectMask()
     if (!mDummyMapDocument)
         return;
 
-    const QPixmap &pixmap = mTile->image();
+    const QPixmap pixmap = mTile->image().copy(mTile->imageRect());
     const QRect content = pixmap.hasAlphaChannel() ? QRegion(pixmap.mask()).boundingRect()
                                                    : pixmap.rect();
 
     // Create the rectangular collision shape
-    MapObject *newObject = new MapObject(QString(), QString(),
-                                         content.topLeft(),
-                                         content.size());
+    MapObject *newObject = new MapObject;
+    newObject->setBounds(content);
 
     ObjectGroup *objectGroup = static_cast<ObjectGroup*>(mDummyMapDocument->map()->layerAt(1));
     mDummyMapDocument->undoStack()->push(new AddMapObjects(mDummyMapDocument.data(), objectGroup, newObject));
@@ -292,6 +295,12 @@ void TileCollisionDock::setTilesetDocument(TilesetDocument *tilesetDocument)
                 this, &TileCollisionDock::tileObjectGroupChanged);
         connect(mTilesetDocument, &TilesetDocument::tilesetTileOffsetChanged,
                 this, &TileCollisionDock::tilesetTileOffsetChanged);
+        connect(mTilesetDocument, &TilesetDocument::tilesetChanged,
+                this, &TileCollisionDock::tilesetChanged);
+
+        mMapScene->setOverrideBackgroundColor(mTilesetDocument->tileset()->backgroundColor());
+    } else {
+        mMapScene->setOverrideBackgroundColor(QColor());
     }
 }
 
@@ -302,7 +311,6 @@ QList<QObject *> TileCollisionDock::selectedObjectsForScript() const
     if (!mDummyMapDocument)
         return objects;
 
-    auto &editableManager = EditableManager::instance();
     auto editableTileset = mTilesetDocument->editable();
     const auto &originalObjects = mTile->objectGroup()->objects();
 
@@ -313,7 +321,7 @@ QList<QObject *> TileCollisionDock::selectedObjectsForScript() const
 
         if (it != originalObjects.end()) {
             MapObject *oo = *it;
-            objects.append(editableManager.editableMapObject(editableTileset, oo));
+            objects.append(EditableMapObject::get(editableTileset, oo));
         }
     }
 
@@ -388,15 +396,20 @@ void TileCollisionDock::setTile(Tile *tile)
     mActionAutoDetectMask->setEnabled(tile);
 
     if (tile) {
-        Map::Orientation orientation = Map::Orthogonal;
-        QSize tileSize = tile->size();
+        Map::Parameters mapParameters;
+        mapParameters.width = 1;
+        mapParameters.height = 1;
 
         if (tile->tileset()->orientation() == Tileset::Isometric) {
-            orientation = Map::Isometric;
-            tileSize = tile->tileset()->gridSize();
+            mapParameters.orientation = Map::Isometric;
+            mapParameters.tileWidth = tile->tileset()->gridSize().width();
+            mapParameters.tileHeight = tile->tileset()->gridSize().height();
+        } else {
+            mapParameters.tileWidth = tile->width();
+            mapParameters.tileHeight = tile->height();
         }
 
-        std::unique_ptr<Map> map { new Map(orientation, 1, 1, tileSize.width(), tileSize.height()) };
+        auto map = std::make_unique<Map>(mapParameters);
         map->addTileset(tile->sharedTileset());
 
         TileLayer *tileLayer = new TileLayer(QString(), 0, 0, 1, 1);
@@ -437,7 +450,6 @@ void TileCollisionDock::setTile(Tile *tile)
         mObjectsView->setMapDocument(nullptr);
         mToolManager->setMapDocument(nullptr);
     }
-
 
     emit dummyMapDocumentChanged(mDummyMapDocument.data());
 
@@ -535,6 +547,11 @@ void TileCollisionDock::tilesetTileOffsetChanged(Tileset *tileset)
     tileLayer->setOffset(-tileOffset);
 
     emit mDummyMapDocument->changed(LayerChangeEvent(tileLayer, LayerChangeEvent::OffsetProperty));
+}
+
+void TileCollisionDock::tilesetChanged(Tileset *tileset)
+{
+    mMapScene->setOverrideBackgroundColor(tileset->backgroundColor());
 }
 
 void TileCollisionDock::cut()

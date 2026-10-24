@@ -22,8 +22,6 @@
 
 #include <QDialog>
 
-class QtVariantProperty;
-
 namespace Ui {
 class ProjectPropertiesDialog;
 }
@@ -31,6 +29,10 @@ class ProjectPropertiesDialog;
 namespace Tiled {
 
 class Project;
+class ProjectDocument;
+
+struct IntProperty;
+struct UrlProperty;
 
 class ProjectPropertiesDialog : public QDialog
 {
@@ -43,12 +45,15 @@ public:
     void accept() override;
 
 private:
+    Project &localProject();
+
     Ui::ProjectPropertiesDialog *ui;
 
     Project &mProject;
-    QtVariantProperty *mExtensionPathProperty;
-    QtVariantProperty *mObjectTypesFileProperty;
-    QtVariantProperty *mAutomappingRulesFileProperty;
+    ProjectDocument *mLocalProjectDocument;
+    IntProperty *mCompatibilityVersionProperty;
+    UrlProperty *mExtensionPathProperty;
+    UrlProperty *mAutomappingRulesFileProperty;
 };
 
 } // namespace Tiled

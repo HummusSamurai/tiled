@@ -22,6 +22,7 @@
 
 #include "mapobject.h"
 #include "objectgroup.h"
+#include "wangset.h"
 
 namespace Tiled {
 
@@ -46,7 +47,10 @@ FileFormat::Options ExportHelper::formatOptions() const
 SharedTileset ExportHelper::prepareExportTileset(const SharedTileset &tileset,
                                                  bool savingTileset) const
 {
-    if (!mOptions)
+    const bool hasExportSettings = !(tileset->exportFileName.isEmpty()
+                                     && tileset->exportFormat.isEmpty());
+
+    if (!mOptions && !hasExportSettings)
         return tileset;
 
     // When the tileset is embedded we're effectively always saving it
@@ -56,7 +60,8 @@ SharedTileset ExportHelper::prepareExportTileset(const SharedTileset &tileset,
         return tileset; // Leave external tileset alone
 
     if (savingTileset && !(mOptions & (Preferences::DetachTemplateInstances |
-                                       Preferences::ResolveObjectTypesAndProperties))) {
+                                       Preferences::ResolveObjectTypesAndProperties))
+            && !hasExportSettings) {
         // We're saving this tileset as-is, so leave it alone
         return tileset;
     }
@@ -65,6 +70,12 @@ SharedTileset ExportHelper::prepareExportTileset(const SharedTileset &tileset,
     // make other changes to the tileset
     SharedTileset exportTileset = tileset->clone();
     exportTileset->setOriginalTileset(tileset);
+
+    // We don't want to save the export options in the exported file
+    if (hasExportSettings) {
+        exportTileset->exportFileName.clear();
+        exportTileset->exportFormat.clear();
+    }
 
     if (mOptions.testFlag(Preferences::DetachTemplateInstances)) {
         for (Tile *tile : exportTileset->tiles()) {
@@ -77,27 +88,29 @@ SharedTileset ExportHelper::prepareExportTileset(const SharedTileset &tileset,
         }
     }
 
-    if (mOptions.testFlag(Preferences::ResolveObjectTypesAndProperties)) {
-        for (Tile *tile : exportTileset->tiles()) {
-            if (!tile->objectGroup())
-                continue;
-
-            for (MapObject *object : *tile->objectGroup())
-                resolveTypeAndProperties(object);
-        }
-    }
+    if (mOptions.testFlag(Preferences::ResolveObjectTypesAndProperties))
+        resolveProperties(exportTileset.data());
 
     return exportTileset;
 }
 
 const Map *ExportHelper::prepareExportMap(const Map *map, std::unique_ptr<Map> &exportMap) const
 {
+    const bool hasExportSettings = !(map->exportFileName.isEmpty()
+                                     && map->exportFormat.isEmpty());
+
     // If no export options are active, return the same map
-    if (!mOptions)
+    if (!(mOptions & ~Preferences::ExportMinimized) && !hasExportSettings)
         return map;
 
     // Make a copy to which export options are applied
     exportMap = map->clone();
+
+    // We don't want to save the export options in the exported file
+    if (hasExportSettings) {
+        exportMap->exportFileName.clear();
+        exportMap->exportFormat.clear();
+    }
 
     if (mOptions.testFlag(Preferences::DetachTemplateInstances)) {
         for (Layer *layer : exportMap->objectGroups()) {
@@ -106,7 +119,7 @@ const Map *ExportHelper::prepareExportMap(const Map *map, std::unique_ptr<Map> &
                     // In case of templated tile objects, the map may not yet
                     // have a reference to the used tileset.
                     if (Tile *tile = object->cell().tile())
-                        exportMap->addTileset(tile->tileset()->sharedPointer());
+                        exportMap->addTileset(tile->tileset()->sharedFromThis());
 
                     object->detachFromTemplate();
                 }
@@ -115,9 +128,7 @@ const Map *ExportHelper::prepareExportMap(const Map *map, std::unique_ptr<Map> &
     }
 
     if (mOptions.testFlag(Preferences::ResolveObjectTypesAndProperties))
-        for (Layer *layer : exportMap->objectGroups())
-            for (MapObject *object : *static_cast<ObjectGroup*>(layer))
-                resolveTypeAndProperties(object);
+        resolveProperties(exportMap.get());
 
     const auto tilesets = exportMap->tilesets();    // needs a copy
     for (const SharedTileset &tileset : tilesets) {
@@ -130,35 +141,134 @@ const Map *ExportHelper::prepareExportMap(const Map *map, std::unique_ptr<Map> &
     return exportMap.get();
 }
 
-void ExportHelper::resolveTypeAndProperties(MapObject *object) const
+static bool resolveClassPropertyMembers(QVariant &value)
 {
-    Tile *tile = object->cell().tile();
-
-    // Inherit type from tile if not set on object (not inheriting
-    // type from tile of tile object template here, for that the
-    // "Detach templates" option needs to be used as well)
-    if (object->type().isEmpty() && tile &&
-            (!object->isTemplateInstance() || object->propertyChanged(MapObject::CellProperty)))
-        object->setType(tile->type());
-
-    Properties properties;
-
-    // Inherit properties from type
-    if (!object->type().isEmpty()) {
-        for (int i = Object::objectTypes().size() - 1; i >= 0; --i) {
-            auto const &type = Object::objectTypes().at(i);
-            if (type.name == object->type())
-                mergeProperties(properties, type.defaultProperties);
-        }
+    // Recurse into list values
+    if (value.userType() == QMetaType::QVariantList) {
+        bool changed = false;
+        auto list = value.value<QVariantList>();
+        for (auto &item : list)
+            changed |= resolveClassPropertyMembers(item);
+        if (changed)
+            value = list;
+        return changed;
     }
 
-    // Inherit properties from tile
-    if (tile)
-        mergeProperties(properties, tile->properties());
+    if (value.userType() != propertyValueId())
+        return false;
 
-    // Override with own properties
-    mergeProperties(properties, object->properties());
+    auto propertyValue = value.value<PropertyValue>();
+    const PropertyType *propertyType = propertyValue.type();
+    if (!propertyType || !propertyType->isClass())
+        return false;
 
+    auto classType = static_cast<const ClassPropertyType*>(propertyType);
+    QVariantMap classValue = propertyValue.value.toMap();
+    bool changed = false;
+
+    // iterate over the members of the class type, making sure each
+    // member is present in classValue, recursively resolving its members
+    auto it = classType->members.begin();
+    const auto it_end = classType->members.end();
+    for (; it != it_end; ++it) {
+        const auto &memberName = it.key();
+        auto &value = classValue[memberName];
+
+        if (!value.isValid()) {
+            value = it.value();
+            changed = true;
+        }
+
+        changed |= resolveClassPropertyMembers(value);
+    }
+
+    if (changed) {
+        propertyValue.value = classValue;
+        value = QVariant::fromValue(propertyValue);
+    }
+
+    return changed;
+}
+
+static void resolveClassPropertyMembers(QVariantMap &properties)
+{
+    for (auto &value : properties)
+        resolveClassPropertyMembers(value);
+}
+
+void ExportHelper::resolveProperties(Object *object) const
+{
+    switch (object->typeId()) {
+    case Object::MapObjectType: {
+        // Map objects need special handling because:
+        //
+        // * We don't want to inherit the properties from the template, since
+        //   that is covered by a separate "Detach templates" option.
+        //
+        // * They can inherit their class from their tile (again, unless that
+        //   tile came from a template).
+        //
+        auto mapObject = static_cast<MapObject*>(object);
+        auto tile = mapObject->cell().tile();
+
+        if (mapObject->className().isEmpty() && tile &&
+                (!mapObject->isTemplateInstance() ||
+                 mapObject->propertyChanged(MapObject::CellProperty))) {
+            mapObject->setClassName(tile->className());
+        }
+
+        Properties properties;
+
+        // Inherit properties from the class
+        if (auto type = Object::propertyTypes().findClassFor(mapObject->className(), *mapObject))
+            mergeProperties(properties, type->members);
+
+        // Inherit properties from the tile
+        if (tile)
+            mergeProperties(properties, tile->properties());
+
+        // Override with own properties
+        mergeProperties(properties, mapObject->properties());
+
+        resolveClassPropertyMembers(properties);
+        mapObject->setProperties(properties);
+        return;
+    }
+    case Object::LayerType:
+        if (static_cast<Layer*>(object)->isObjectGroup()) {
+            auto objectGroup = static_cast<ObjectGroup*>(object);
+            for (MapObject *mapObject : *objectGroup)
+                resolveProperties(mapObject);
+        }
+        // Group layers are handled by layer iterator
+        break;
+    case Object::MapType:
+        for (auto layer : static_cast<Map*>(object)->allLayers())
+            resolveProperties(layer);
+        // Tilesets are handled by prepareExportTileset
+        break;
+    case Object::TilesetType:
+        for (auto tile : static_cast<Tileset*>(object)->tiles())
+            resolveProperties(tile);
+        for (auto wangSet : static_cast<Tileset*>(object)->wangSets())
+            resolveProperties(wangSet);
+        break;
+    case Object::TileType:
+        if (auto objectGroup = static_cast<Tile*>(object)->objectGroup())
+            resolveProperties(objectGroup);
+        break;
+    case Object::WangSetType:
+        for (const auto &color : static_cast<WangSet*>(object)->colors())
+            resolveProperties(color.data());
+        break;
+    case Object::WangColorType:
+    case Object::ProjectType:
+    case Object::WorldType:
+        break;
+    }
+
+    auto properties = object->resolvedProperties();
+    resolveClassPropertyMembers(properties);
     object->setProperties(properties);
 }
 

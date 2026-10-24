@@ -54,23 +54,6 @@ Layer::Layer(TypeFlag type, const QString &name, int x, int y)
 {
 }
 
-void Layer::resetIds()
-{
-    mId = 0;        // reset out own ID
-
-    switch (layerType()) {
-    case ObjectGroupType:
-        static_cast<ObjectGroup*>(this)->resetObjectIds();
-        break;
-    case GroupLayerType:
-        for (Layer *layer : static_cast<GroupLayer*>(this)->layers())
-            layer->resetIds();
-        break;
-    default:
-        break;
-    }
-}
-
 /**
  * Returns the effective opacity, which is the opacity multiplied by the
  * opacity of any parent layers.
@@ -221,11 +204,15 @@ bool Layer::canMergeDown() const
  */
 Layer *Layer::initializeClone(Layer *clone) const
 {
+    clone->setClassName(className());
     clone->mId = mId;
     clone->mOffset = mOffset;
+    clone->mParallaxFactor = mParallaxFactor;
     clone->mOpacity = mOpacity;
+    clone->mBlendMode = mBlendMode;
     clone->mTintColor = mTintColor;
     clone->mVisible = mVisible;
+    clone->mLocked = mLocked;
     clone->setProperties(properties());
     return clone;
 }
@@ -250,6 +237,14 @@ GroupLayer *Layer::asGroupLayer()
     return isGroupLayer() ? static_cast<GroupLayer*>(this) : nullptr;
 }
 
+
+void LayerIterator::setCurrentLayer(Layer *layer)
+{
+    Q_ASSERT(!layer || layer->map() == mMap);
+
+    mCurrentLayer = layer;
+    mSiblingIndex = layer ? layer->siblingIndex() : -1;
+}
 
 Layer *LayerIterator::next()
 {
@@ -372,7 +367,7 @@ bool LayerIterator::operator==(const LayerIterator &other) const
  * Returns the global layer index for the given \a layer. Obtained by iterating
  * the layer's map while incrementing the index until layer is found.
  */
-int globalIndex(Layer *layer)
+int globalIndex(const Layer *layer)
 {
     if (!layer)
         return -1;

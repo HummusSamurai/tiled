@@ -1,6 +1,6 @@
 /*
  * tiled.cpp
- * Copyright 2017, Thorbjørn Lindeijer <bjorn@lindeijer.nl>
+ * Copyright 2017-2022, Thorbjørn Lindeijer <bjorn@lindeijer.nl>
  *
  * This file is part of Tiled.
  *
@@ -21,39 +21,79 @@
 #include "tiled.h"
 
 #include <QDir>
+#include <QImageReader>
 
-QPointF Tiled::alignmentOffset(const QRectF &r, Tiled::Alignment alignment)
+QPointF Tiled::alignmentOffset(const QSizeF &size, Alignment alignment)
 {
     switch (alignment) {
     case Unspecified:   break;
     case TopLeft:       break;
-    case Top:           return QPointF(r.width() / 2, 0);
-    case TopRight:      return QPointF(r.width(), 0);
-    case Left:          return QPointF(0, r.height() / 2);
-    case Center:        return QPointF(r.width() / 2, r.height() / 2);
-    case Right:         return QPointF(r.width(), r.height() / 2);
-    case BottomLeft:    return QPointF(0, r.height());
-    case Bottom:        return QPointF(r.width() / 2, r.height());
-    case BottomRight:   return QPointF(r.width(), r.height());
+    case Top:           return QPointF(size.width() / 2, 0);
+    case TopRight:      return QPointF(size.width(), 0);
+    case Left:          return QPointF(0, size.height() / 2);
+    case Center:        return QPointF(size.width() / 2, size.height() / 2);
+    case Right:         return QPointF(size.width(), size.height() / 2);
+    case BottomLeft:    return QPointF(0, size.height());
+    case Bottom:        return QPointF(size.width() / 2, size.height());
+    case BottomRight:   return QPointF(size.width(), size.height());
     }
     return QPointF();
 }
 
-QString Tiled::toFileReference(const QUrl &url, const QDir &dir)
+Tiled::Alignment Tiled::flipAlignment(Alignment alignment, FlipDirection direction)
+{
+    switch (direction) {
+    case FlipHorizontally:
+        switch (alignment) {
+        case Unspecified:   Q_ASSERT(false); break;
+        case TopLeft:       return TopRight;
+        case Top:           return Top;
+        case TopRight:      return TopLeft;
+        case Left:          return Right;
+        case Center:        return Center;
+        case Right:         return Left;
+        case BottomLeft:    return BottomRight;
+        case Bottom:        return Bottom;
+        case BottomRight:   return BottomLeft;
+        }
+        break;
+    case FlipVertically:
+        switch (alignment) {
+        case Unspecified:   Q_ASSERT(false); break;
+        case TopLeft:       return BottomLeft;
+        case Top:           return Bottom;
+        case TopRight:      return BottomRight;
+        case Left:          return Left;
+        case Center:        return Center;
+        case Right:         return Right;
+        case BottomLeft:    return TopLeft;
+        case Bottom:        return Top;
+        case BottomRight:   return TopRight;
+        }
+        break;
+    }
+    return alignment;
+}
+
+QString Tiled::toFileReference(const QUrl &url, const QString &path)
 {
     if (url.isEmpty())
         return QString();
 
     if (url.isLocalFile()) {
-        // Local files are referred to by relative path
         QString localFile = url.toLocalFile();
-        return dir.relativeFilePath(localFile);
+
+        if (path.isEmpty())
+            return localFile;
+
+        // Local files can be referred to by relative path
+        return QDir(path).relativeFilePath(localFile);
     }
 
     return url.toString();
 }
 
-QUrl Tiled::toUrl(const QString &filePathOrUrl, const QDir &dir)
+QUrl Tiled::toUrl(const QString &filePathOrUrl, const QString &path)
 {
     if (filePathOrUrl.isEmpty())
         return QUrl();
@@ -65,24 +105,16 @@ QUrl Tiled::toUrl(const QString &filePathOrUrl, const QDir &dir)
             return url;
     }
 
+    QString filePath = filePathOrUrl;
+
     // Resolve possible relative file reference
-    QString absolutePath = QDir::cleanPath(dir.filePath(filePathOrUrl));
-    if (absolutePath.startsWith(QLatin1String(":/")))
-        return QUrl(QLatin1String("qrc") + absolutePath);
+    if (!path.isEmpty())
+        filePath = QDir::cleanPath(QDir(path).filePath(filePath));
 
-    return QUrl::fromLocalFile(absolutePath);
-}
+    if (filePath.startsWith(QLatin1String(":/")))
+        return QUrl(QLatin1String("qrc") + filePath);
 
-QUrl Tiled::toUrl(const QString &filePathOrUrl)
-{
-    QUrl url(filePathOrUrl);
-
-    if (filePathOrUrl.startsWith(QLatin1String(":/")))
-        url = QUrl(QLatin1String("qrc") + filePathOrUrl);
-    else if (QDir::isAbsolutePath(filePathOrUrl) || url.isRelative())
-        url = QUrl::fromLocalFile(filePathOrUrl);
-
-    return url;
+    return QUrl::fromLocalFile(filePath);
 }
 
 /*
@@ -109,6 +141,17 @@ QString Tiled::urlToLocalFileOrQrc(const QUrl &url)
 #endif
 
     return url.toLocalFile();
+}
+
+QString Tiled::filePathRelativeTo(const QDir &dir, const QString &filePath)
+{
+    // We can't refer to files loaded from extensions or resources using relative paths
+    if (filePath.startsWith(QLatin1String("ext:")) ||
+            filePath.startsWith(QLatin1String(":"))) {
+        return filePath;
+    }
+
+    return dir.relativeFilePath(filePath);
 }
 
 QString Tiled::alignmentToString(Alignment alignment)
@@ -162,4 +205,63 @@ Tiled::Alignment Tiled::alignmentFromString(const QString &string)
         return BottomRight;
 
     return Unspecified;
+}
+
+Tiled::CompatibilityVersion Tiled::versionFromString(const QString &string)
+{
+    if (string == QLatin1String("1.8"))
+        return Tiled_1_8;
+    else if (string == QLatin1String("1.9"))
+        return Tiled_1_9;
+    else if (string == QLatin1String("1.10"))
+        return Tiled_1_10;
+    else if (string == QLatin1String("latest"))
+        return Tiled_Latest;
+    return UnknownVersion;
+}
+
+void Tiled::increaseImageAllocationLimit(int mbLimit)
+{
+    // Adjust the allocation limit to accommodate larger images
+    const int currentLimit = QImageReader::allocationLimit();
+    if (currentLimit && currentLimit < mbLimit)
+        QImageReader::setAllocationLimit(mbLimit);
+}
+
+static constexpr struct BlendModeMapping {
+    Tiled::BlendMode mode;
+    const char *name;
+} blendModeMapping[] = {
+    { Tiled::BlendMode::Normal,     "normal"        },
+    { Tiled::BlendMode::Add,        "add"           },
+    { Tiled::BlendMode::Multiply,   "multiply"      },
+    { Tiled::BlendMode::Screen,     "screen"        },
+    { Tiled::BlendMode::Overlay,    "overlay"       },
+    { Tiled::BlendMode::Darken,     "darken"        },
+    { Tiled::BlendMode::Lighten,    "lighten"       },
+    { Tiled::BlendMode::ColorDodge, "color-dodge"   },
+    { Tiled::BlendMode::ColorBurn,  "color-burn"    },
+    { Tiled::BlendMode::HardLight,  "hard-light"    },
+    { Tiled::BlendMode::SoftLight,  "soft-light"    },
+    { Tiled::BlendMode::Difference, "difference"    },
+    { Tiled::BlendMode::Exclusion,  "exclusion"     },
+};
+
+QString Tiled::blendModeToString(BlendMode mode)
+{
+    for (const auto &mapping : blendModeMapping)
+        if (mapping.mode == mode)
+            return QString::fromLatin1(mapping.name);
+
+    return QString();
+}
+
+Tiled::BlendMode Tiled::blendModeFromString(const QString &name)
+{
+    if (!name.isEmpty())
+        for (const auto &mapping : blendModeMapping)
+            if (QLatin1String(mapping.name) == name)
+                return mapping.mode;
+
+    return BlendMode::Normal;
 }

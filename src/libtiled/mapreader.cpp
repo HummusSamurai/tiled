@@ -53,8 +53,6 @@
 
 #include <memory>
 
-#include "qtcompat_p.h"
-
 using namespace Tiled;
 using namespace Tiled::Internal;
 
@@ -105,14 +103,14 @@ private:
     void readTileLayerData(TileLayer &tileLayer);
     void readTileLayerRect(TileLayer &tileLayer,
                            Map::LayerDataFormat layerDataFormat,
-                           QStringRef encoding,
+                           QStringView encoding,
                            QRect bounds);
     void decodeBinaryLayerData(TileLayer &tileLayer,
                                const QByteArray &data,
                                Map::LayerDataFormat format,
                                QRect bounds);
     void decodeCSVLayerData(TileLayer &tileLayer,
-                            QStringRef text,
+                            QStringView text,
                             QRect bounds);
 
     /**
@@ -138,7 +136,8 @@ private:
     QVector<Frame> readAnimationFrames();
 
     Properties readProperties();
-    void readProperty(Properties *properties);
+    void readProperty(Properties *properties, const ExportContext &context);
+    QVariant readPropertyValue(const ExportContext &context);
 
     MapReader *p;
 
@@ -244,19 +243,14 @@ std::unique_ptr<Map> MapReaderPrivate::readMap()
     Q_ASSERT(xml.isStartElement() && xml.name() == QLatin1String("map"));
 
     const QXmlStreamAttributes atts = xml.attributes();
-    const int mapWidth = atts.value(QLatin1String("width")).toInt();
-    const int mapHeight = atts.value(QLatin1String("height")).toInt();
-    const int tileWidth = atts.value(QLatin1String("tilewidth")).toInt();
-    const int tileHeight = atts.value(QLatin1String("tileheight")).toInt();
-    const int infinite = atts.value(QLatin1String("infinite")).toInt();
-    const int hexSideLength = atts.value(QLatin1String("hexsidelength")).toInt();
 
     const QString orientationString =
             atts.value(QLatin1String("orientation")).toString();
-    const Map::Orientation orientation =
-            orientationFromString(orientationString);
 
-    if (orientation == Map::Unknown) {
+    Map::Parameters mapParameters;
+    mapParameters.orientation = orientationFromString(orientationString);
+
+    if (mapParameters.orientation == Map::Unknown) {
         xml.raiseError(tr("Unsupported map orientation: \"%1\"")
                        .arg(orientationString));
     }
@@ -265,27 +259,40 @@ std::unique_ptr<Map> MapReaderPrivate::readMap()
     const QString staggerIndex = atts.value(QLatin1String("staggerindex")).toString();
     const QString renderOrder = atts.value(QLatin1String("renderorder")).toString();
 
-    bool compressionLevelOk;
-    const int compressionLevel = atts.value(QLatin1String("compressionlevel")).toInt(&compressionLevelOk);
+    mapParameters.renderOrder = renderOrderFromString(renderOrder);
+    mapParameters.width = atts.value(QLatin1String("width")).toInt();
+    mapParameters.height = atts.value(QLatin1String("height")).toInt();
+    mapParameters.tileWidth = atts.value(QLatin1String("tilewidth")).toInt();
+    mapParameters.tileHeight = atts.value(QLatin1String("tileheight")).toInt();
+    mapParameters.infinite = atts.value(QLatin1String("infinite")).toInt();
+    mapParameters.hexSideLength = atts.value(QLatin1String("hexsidelength")).toInt();
+    mapParameters.staggerAxis = staggerAxisFromString(staggerAxis);
+    mapParameters.staggerIndex = staggerIndexFromString(staggerIndex);
 
-    const int nextLayerId = atts.value(QLatin1String("nextlayerid")).toInt();
-    const int nextObjectId = atts.value(QLatin1String("nextobjectid")).toInt();
-
-    mMap = std::make_unique<Map>(orientation, mapWidth, mapHeight, tileWidth, tileHeight, infinite);
-    mMap->setHexSideLength(hexSideLength);
-    mMap->setStaggerAxis(staggerAxisFromString(staggerAxis));
-    mMap->setStaggerIndex(staggerIndexFromString(staggerIndex));
-    mMap->setRenderOrder(renderOrderFromString(renderOrder));
-    if (compressionLevelOk)
-        mMap->setCompressionLevel(compressionLevel);
-    if (nextLayerId)
-        mMap->setNextLayerId(nextLayerId);
-    if (nextObjectId)
-        mMap->setNextObjectId(nextObjectId);
+    bool ok;
+    if (const int skewX = atts.value(QLatin1String("skewx")).toInt(&ok); ok)
+        mapParameters.skewX = skewX;
+    if (const int skewY = atts.value(QLatin1String("skewy")).toInt(&ok); ok)
+        mapParameters.skewY = skewY;
+    if (const qreal parallaxOriginX = atts.value(QLatin1String("parallaxoriginx")).toDouble(&ok); ok)
+        mapParameters.parallaxOrigin.setX(parallaxOriginX);
+    if (const qreal parallaxOriginY = atts.value(QLatin1String("parallaxoriginy")).toDouble(&ok); ok)
+        mapParameters.parallaxOrigin.setY(parallaxOriginY);
 
     const QString backgroundColor = atts.value(QLatin1String("backgroundcolor")).toString();
     if (QColor::isValidColor(backgroundColor))
-        mMap->setBackgroundColor(QColor(backgroundColor));
+        mapParameters.backgroundColor = QColor(backgroundColor);
+
+    mMap = std::make_unique<Map>(mapParameters);
+
+    mMap->setClassName(atts.value(QLatin1String("class")).toString());
+
+    if (const int compressionLevel = atts.value(QLatin1String("compressionlevel")).toInt(&ok); ok)
+        mMap->setCompressionLevel(compressionLevel);
+    if (const int nextLayerId = atts.value(QLatin1String("nextlayerid")).toInt())
+        mMap->setNextLayerId(nextLayerId);
+    if (const int nextObjectId = atts.value(QLatin1String("nextobjectid")).toInt())
+        mMap->setNextObjectId(nextObjectId);
 
     while (xml.readNextStartElement()) {
         if (xml.name() == QLatin1String("editorsettings"))
@@ -305,9 +312,8 @@ std::unique_ptr<Map> MapReaderPrivate::readMap()
         mMap.reset();
     } else {
         // Try to load the tileset images for embedded tilesets
-        auto tilesets = mMap->tilesets();
-        for (SharedTileset &tileset : tilesets) {
-            if (!tileset->isCollection() && tileset->fileName().isEmpty())
+        for (const SharedTileset &tileset : mMap->tilesets()) {
+            if (tileset->fileName().isEmpty())
                 tileset->loadImage();
         }
 
@@ -386,21 +392,27 @@ SharedTileset MapReaderPrivate::readTileset()
             return {};
         }
 
+        const QString className = atts.value(QLatin1String("class")).toString();
         const int tileSpacing = atts.value(QLatin1String("spacing")).toInt();
         const int margin = atts.value(QLatin1String("margin")).toInt();
         const int columns = atts.value(QLatin1String("columns")).toInt();
         const QString backgroundColor = atts.value(QLatin1String("backgroundcolor")).toString();
         const QString alignment = atts.value(QLatin1String("objectalignment")).toString();
+        const QString tileRenderSize = atts.value(QLatin1String("tilerendersize")).toString();
+        const QString fillMode = atts.value(QLatin1String("fillmode")).toString();
 
         tileset = Tileset::create(name, tileWidth, tileHeight,
                                   tileSpacing, margin);
 
+        tileset->setClassName(className);
         tileset->setColumnCount(columns);
 
         if (QColor::isValidColor(backgroundColor))
             tileset->setBackgroundColor(QColor(backgroundColor));
 
         tileset->setObjectAlignment(alignmentFromString(alignment));
+        tileset->setTileRenderSize(Tileset::tileRenderSizeFromString(tileRenderSize));
+        tileset->setFillMode(Tileset::fillModeFromString(fillMode));
 
         while (xml.readNextStartElement()) {
             if (xml.name() == QLatin1String("editorsettings")) {
@@ -491,13 +503,22 @@ void MapReaderPrivate::readTilesetTile(Tileset &tileset)
 
     Tile *tile = tileset.findOrCreateTile(id);
 
-    tile->setType(atts.value(QLatin1String("type")).toString());
+    const QRect imageRect(atts.value(QLatin1String("x")).toInt(),
+                          atts.value(QLatin1String("y")).toInt(),
+                          atts.value(QLatin1String("width")).toInt(),
+                          atts.value(QLatin1String("height")).toInt());
+    tile->setImageRect(imageRect);
+
+    QString className = atts.value(QLatin1String("class")).toString();
+    if (className.isEmpty())    // fallback for compatibility
+        className = atts.value(QLatin1String("type")).toString();
+    tile->setClassName(className);
 
     // Read tile quadrant terrain ids as Wang IDs. This is possible because the
     // terrain types (loaded as WangSet) are always stored before the tiles.
-    const QStringRef terrain = atts.value(QLatin1String("terrain"));
+    const auto terrain = atts.value(QLatin1String("terrain"));
     if (!terrain.isEmpty() && tileset.wangSetCount() > 0) {
-        QVector<QStringRef> quadrants = terrain.split(QLatin1Char(','));
+        const auto quadrants = terrain.split(QLatin1Char(','));
         WangId wangId;
         if (quadrants.size() == 4) {
             for (int i = 0; i < 4; ++i) {
@@ -741,10 +762,12 @@ void MapReaderPrivate::readTilesetWangSets(Tileset &tileset)
         if (xml.name() == QLatin1String("wangset")) {
             const QXmlStreamAttributes atts = xml.attributes();
             const QString name = atts.value(QLatin1String("name")).toString();
+            const QString className = atts.value(QLatin1String("class")).toString();
             const WangSet::Type type = wangSetTypeFromString(atts.value(QLatin1String("type")).toString());
             const int tileId = atts.value(QLatin1String("tile")).toInt();
 
             auto wangSet = std::make_unique<WangSet>(&tileset, name, type, tileId);
+            wangSet->setClassName(className);
 
             // For backwards-compatibility
             QVector<int> cornerColors;
@@ -759,7 +782,7 @@ void MapReaderPrivate::readTilesetWangSets(Tileset &tileset)
                 } else if (xml.name() == QLatin1String("wangtile")) {
                     const QXmlStreamAttributes tileAtts = xml.attributes();
                     const int tileId = tileAtts.value(QLatin1String("tileid")).toInt();
-                    const QStringRef wangIdString = tileAtts.value(QLatin1String("wangid"));
+                    const auto wangIdString = tileAtts.value(QLatin1String("wangid"));
 
                     bool ok = true;
                     WangId wangId;
@@ -796,6 +819,7 @@ void MapReaderPrivate::readTilesetWangSets(Tileset &tileset)
                 } else if (xml.name() == QLatin1String("wangcolor") || isCorner || isEdge) {
                     const QXmlStreamAttributes wangColorAtts = xml.attributes();
                     const QString name = wangColorAtts.value(QLatin1String("name")).toString();
+                    const QString className = wangColorAtts.value(QLatin1String("class")).toString();
                     const QColor color = wangColorAtts.value(QLatin1String("color")).toString();
                     const int imageId = wangColorAtts.value(QLatin1String("tile")).toInt();
                     const qreal probability = wangColorAtts.value(QLatin1String("probability")).toDouble();
@@ -805,6 +829,7 @@ void MapReaderPrivate::readTilesetWangSets(Tileset &tileset)
                                                                 color,
                                                                 imageId,
                                                                 probability);
+                    wc->setClassName(className);
 
                     while (xml.readNextStartElement()) {
                         if (xml.name() == QLatin1String("properties"))
@@ -840,30 +865,23 @@ void MapReaderPrivate::readTilesetWangSets(Tileset &tileset)
 static void readLayerAttributes(Layer &layer,
                                 const QXmlStreamAttributes &atts)
 {
-    const auto idRef = atts.value(QLatin1String("id"));
-    const auto opacityRef = atts.value(QLatin1String("opacity"));
-    const auto visibleRef = atts.value(QLatin1String("visible"));
-    const auto lockedRef = atts.value(QLatin1String("locked"));
+    layer.setClassName(atts.value(QLatin1String("class")).toString());
 
     bool ok;
-    const int id = idRef.toInt(&ok);
-    if (ok)
+    if (const int id = atts.value(QLatin1String("id")).toInt(&ok); ok)
         layer.setId(id);
 
-    const qreal opacity = opacityRef.toDouble(&ok);
-    if (ok)
+    if (const qreal opacity = atts.value(QLatin1String("opacity")).toDouble(&ok); ok)
         layer.setOpacity(opacity);
 
     const auto tintColor = atts.value(QLatin1String("tintcolor"));
     if (!tintColor.isEmpty())
         layer.setTintColor(QColor(tintColor.toString()));
 
-    const int visible = visibleRef.toInt(&ok);
-    if (ok)
+    if (const int visible = atts.value(QLatin1String("visible")).toInt(&ok); ok)
         layer.setVisible(visible);
 
-    const int locked = lockedRef.toInt(&ok);
-    if (ok)
+    if (const int locked = atts.value(QLatin1String("locked")).toInt(&ok); ok)
         layer.setLocked(locked);
 
     const QPointF offset(atts.value(QLatin1String("offsetx")).toDouble(),
@@ -872,14 +890,16 @@ static void readLayerAttributes(Layer &layer,
     layer.setOffset(offset);
 
     QPointF parallaxFactor(1.0, 1.0);
-    const qreal factorX = atts.value(QLatin1String("parallaxx")).toDouble(&ok);
-    if (ok)
+
+    if (const qreal factorX = atts.value(QLatin1String("parallaxx")).toDouble(&ok); ok)
         parallaxFactor.setX(factorX);
-    const qreal factorY = atts.value(QLatin1String("parallaxy")).toDouble(&ok);
-    if (ok)
+    if (const qreal factorY = atts.value(QLatin1String("parallaxy")).toDouble(&ok); ok)
         parallaxFactor.setY(factorY);
 
     layer.setParallaxFactor(parallaxFactor);
+
+    const auto mode = atts.value(QLatin1String("mode")).toString();
+    layer.setBlendMode(blendModeFromString(mode));
 }
 
 std::unique_ptr<TileLayer> MapReaderPrivate::readTileLayer()
@@ -950,7 +970,7 @@ void MapReaderPrivate::readTileLayerData(TileLayer &tileLayer)
 
 void MapReaderPrivate::readTileLayerRect(TileLayer &tileLayer,
                                          Map::LayerDataFormat layerDataFormat,
-                                         QStringRef encoding,
+                                         QStringView encoding,
                                          QRect bounds)
 {
     Q_ASSERT(xml.isStartElement() && (xml.name() == QLatin1String("data") ||
@@ -1031,7 +1051,7 @@ void MapReaderPrivate::decodeBinaryLayerData(TileLayer &tileLayer,
 }
 
 void MapReaderPrivate::decodeCSVLayerData(TileLayer &tileLayer,
-                                          QStringRef text,
+                                          QStringView text,
                                           QRect bounds)
 {
     int currentIndex = 0;
@@ -1141,6 +1161,9 @@ std::unique_ptr<ImageLayer> MapReaderPrivate::readImageLayer()
     auto imageLayer = std::make_unique<ImageLayer>(name, x, y);
     readLayerAttributes(*imageLayer, atts);
 
+    imageLayer->setRepeatX(atts.value(QLatin1String("repeatx")).toInt());
+    imageLayer->setRepeatY(atts.value(QLatin1String("repeaty")).toInt());
+
     // Image layer pixel position moved from x/y to offsetx/offsety for
     // consistency with other layers. This is here for backwards compatibility.
     if (!atts.hasAttribute(QLatin1String("offsetx")))
@@ -1178,13 +1201,16 @@ std::unique_ptr<MapObject> MapReaderPrivate::readObject()
     const qreal y = atts.value(QLatin1String("y")).toDouble();
     const qreal width = atts.value(QLatin1String("width")).toDouble();
     const qreal height = atts.value(QLatin1String("height")).toDouble();
-    const QString type = atts.value(QLatin1String("type")).toString();
     const auto visibleRef = atts.value(QLatin1String("visible"));
+
+    QString className = atts.value(QLatin1String("class")).toString();
+    if (className.isEmpty())    // fallback for compatibility
+        className = atts.value(QLatin1String("type")).toString();
 
     const QPointF pos(x, y);
     const QSizeF size(width, height);
 
-    auto object = std::make_unique<MapObject>(name, type, pos, size);
+    auto object = std::make_unique<MapObject>(name, className, pos, size);
 
     if (!templateFileName.isEmpty()) { // This object is a template instance
         const QString absoluteFileName = p->resolveReference(templateFileName, mPath);
@@ -1195,7 +1221,6 @@ std::unique_ptr<MapObject> MapReaderPrivate::readObject()
     object->setId(id);
 
     object->setPropertyChanged(MapObject::NameProperty, !name.isEmpty());
-    object->setPropertyChanged(MapObject::TypeProperty, !type.isEmpty());
     object->setPropertyChanged(MapObject::SizeProperty, !size.isEmpty());
 
     bool ok;
@@ -1203,6 +1228,12 @@ std::unique_ptr<MapObject> MapReaderPrivate::readObject()
     if (ok) {
         object->setRotation(rotation);
         object->setPropertyChanged(MapObject::RotationProperty);
+    }
+
+    const qreal opacity = atts.value(QLatin1String("opacity")).toDouble(&ok);
+    if (ok) {
+        object->setOpacity(opacity);
+        object->setPropertyChanged(MapObject::OpacityProperty);
     }
 
     if (gid) {
@@ -1231,6 +1262,10 @@ std::unique_ptr<MapObject> MapReaderPrivate::readObject()
             xml.skipCurrentElement();
             object->setShape(MapObject::Ellipse);
             object->setPropertyChanged(MapObject::ShapeProperty);
+        } else if (xml.name() == QLatin1String("capsule")) {
+            xml.skipCurrentElement();
+            object->setShape(MapObject::Capsule);
+            object->setPropertyChanged(MapObject::ShapeProperty);
         } else if (xml.name() == QLatin1String("text")) {
             object->setTextData(readObjectText());
             object->setShape(MapObject::Text);
@@ -1256,13 +1291,8 @@ QPolygonF MapReaderPrivate::readPolygon()
 
     const QXmlStreamAttributes atts = xml.attributes();
     const QString points = atts.value(QLatin1String("points")).toString();
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-    const QStringList pointsList = points.split(QLatin1Char(' '),
-                                                QString::SkipEmptyParts);
-#else
     const QStringList pointsList = points.split(QLatin1Char(' '),
                                                 Qt::SkipEmptyParts);
-#endif
 
     QPolygonF polygon;
     bool ok = true;
@@ -1274,21 +1304,12 @@ QPolygonF MapReaderPrivate::readPolygon()
             break;
         }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
         const qreal x = QStringView(point).left(commaPos).toDouble(&ok);
         if (!ok)
             break;
         const qreal y = QStringView(point).mid(commaPos + 1).toDouble(&ok);
         if (!ok)
             break;
-#else
-        const qreal x = point.leftRef(commaPos).toDouble(&ok);
-        if (!ok)
-            break;
-        const qreal y = point.midRef(commaPos + 1).toDouble(&ok);
-        if (!ok)
-            break;
-#endif
 
         polygon.append(QPointF(x, y));
     }
@@ -1412,10 +1433,11 @@ Properties MapReaderPrivate::readProperties()
     Q_ASSERT(xml.isStartElement() && xml.name() == QLatin1String("properties"));
 
     Properties properties;
+    const ExportContext context(mPath.path());  // NoRecursion mode
 
     while (xml.readNextStartElement()) {
         if (xml.name() == QLatin1String("property"))
-            readProperty(&properties);
+            readProperty(&properties, context);
         else
             readUnknownElement();
     }
@@ -1423,34 +1445,49 @@ Properties MapReaderPrivate::readProperties()
     return properties;
 }
 
-void MapReaderPrivate::readProperty(Properties *properties)
+void MapReaderPrivate::readProperty(Properties *properties, const ExportContext &context)
 {
     Q_ASSERT(xml.isStartElement() && xml.name() == QLatin1String("property"));
 
     const QXmlStreamAttributes atts = xml.attributes();
     QString propertyName = atts.value(QLatin1String("name")).toString();
-    QString propertyValue = atts.value(QLatin1String("value")).toString();
-    QString propertyType = atts.value(QLatin1String("type")).toString();
+
+    properties->insert(propertyName, readPropertyValue(context));
+}
+
+QVariant MapReaderPrivate::readPropertyValue(const ExportContext &context)
+{
+    const QXmlStreamAttributes atts = xml.attributes();
+
+    ExportValue exportValue;
+    exportValue.typeName = atts.value(QLatin1String("type")).toString();
+    exportValue.propertyTypeName = atts.value(QLatin1String("propertytype")).toString();
+
+    const QString propertyValue = atts.value(QLatin1String("value")).toString();
+    exportValue.value = propertyValue;
+
+    QVariantList values;
 
     while (xml.readNext() != QXmlStreamReader::Invalid) {
         if (xml.isEndElement()) {
             break;
         } else if (xml.isCharacters() && !xml.isWhitespace()) {
             if (propertyValue.isEmpty())
-                propertyValue = xml.text().toString();
+                exportValue.value = xml.text().toString();
         } else if (xml.isStartElement()) {
-            readUnknownElement();
+            if (xml.name() == QLatin1String("properties"))
+                exportValue.value = readProperties();
+            else if (xml.name() == QLatin1String("item"))
+                values.append(readPropertyValue(context));
+            else
+                readUnknownElement();
         }
     }
 
-    QVariant variant(propertyValue);
+    if (exportValue.typeName == QLatin1String("list"))
+        exportValue.value = values;
 
-    if (!propertyType.isEmpty()) {
-        int type = nameToType(propertyType);
-        variant = fromExportValue(variant, type, mPath);
-    }
-
-    properties->insert(propertyName, variant);
+    return context.toPropertyValue(exportValue);
 }
 
 
@@ -1481,7 +1518,7 @@ std::unique_ptr<Map> MapReader::readMap(const QString &fileName)
 SharedTileset MapReader::readTileset(QIODevice *device, const QString &path)
 {
     SharedTileset tileset = d->readTileset(device, path);
-    if (tileset && !tileset->isCollection())
+    if (tileset)
         tileset->loadImage();
 
     return tileset;

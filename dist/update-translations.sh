@@ -3,10 +3,10 @@
 lupdate -locations relative -no-obsolete \
     src/libtiled \
     src/plugins \
-    src/qtpropertybrowser \
     src/qtsingleapplication \
     src/terraingenerator \
     src/tiled \
+    src/tiledapp \
     src/tiledquick \
     src/tiledquickplugin \
     src/tmxrasterizer \

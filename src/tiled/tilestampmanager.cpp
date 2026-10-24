@@ -24,17 +24,14 @@
 #include "abstracttool.h"
 #include "bucketfilltool.h"
 #include "documentmanager.h"
-#include "mapdocument.h"
 #include "map.h"
+#include "mapdocument.h"
 #include "preferences.h"
 #include "savefile.h"
 #include "stampbrush.h"
-#include "tilelayer.h"
-#include "tileselectiontool.h"
-#include "tileset.h"
-#include "tilesetmanager.h"
 #include "tilestampmodel.h"
 #include "toolmanager.h"
+#include "utils.h"
 
 #include <QDebug>
 #include <QDirIterator>
@@ -45,14 +42,19 @@
 
 using namespace Tiled;
 
+TileStampManager *TileStampManager::ourInstance;
+
 TileStampManager::TileStampManager(const ToolManager &toolManager,
                                    QObject *parent)
     : QObject(parent)
-    , stampsDirectory("stampsFolder", Preferences::dataLocation() + QLatin1String("/stamps"))
+    , stampsDirectory("stampsFolder", Preferences::instance()->dataLocation() + QLatin1String("/stamps"))
     , mQuickStamps(quickStampKeys().length())
     , mTileStampModel(new TileStampModel(this))
     , mToolManager(toolManager)
 {
+    Q_ASSERT(!ourInstance);
+    ourInstance = this;
+
     mRegisteredCb = stampsDirectory.onChange([this] { stampsDirectoryChanged(); });
 
     connect(mTileStampModel, &TileStampModel::stampAdded,
@@ -63,8 +65,6 @@ TileStampManager::TileStampManager(const ToolManager &toolManager,
             this, &TileStampManager::saveStamp);
     connect(mTileStampModel, &TileStampModel::stampRemoved,
             this, &TileStampManager::deleteStamp);
-
-    loadStamps();
 }
 
 TileStampManager::~TileStampManager()
@@ -72,6 +72,8 @@ TileStampManager::~TileStampManager()
     // needs to be over here where the TileStamp type is complete
 
     stampsDirectory.unregister(mRegisteredCb);
+
+    ourInstance = nullptr;
 }
 
 static TileStamp stampFromContext(AbstractTool *selectedTool)
@@ -86,32 +88,26 @@ static TileStamp stampFromContext(AbstractTool *selectedTool)
         stamp = fillTool->stamp();
     } else if (auto mapDocument = qobject_cast<MapDocument*>(DocumentManager::instance()->currentDocument())) {
         // try making a stamp from the current tile selection
-        const auto tileLayer = dynamic_cast<TileLayer*>(mapDocument->currentLayer());
-        if (!tileLayer)
+        const QRegion &selectedArea = mapDocument->selectedArea();
+        if (selectedArea.isEmpty())
             return stamp;
 
-        QRegion selection = mapDocument->selectedArea().intersected(tileLayer->bounds());
-        if (selection.isEmpty())
-            return stamp;
-
-        selection.translate(-tileLayer->position());
-        auto copy = tileLayer->copy(selection);
-
-        if (copy->isEmpty())
-            return stamp;
-
+        const QRect selectionBounds = selectedArea.boundingRect();
         const Map *map = mapDocument->map();
-        std::unique_ptr<Map> copyMap { new Map(map->orientation(),
-                                               copy->width(), copy->height(),
-                                               map->tileWidth(), map->tileHeight()) };
 
-        // Add tileset references to map
-        copyMap->addTilesets(copy->usedTilesets());
+        Map::Parameters mapParameters = map->parameters();
+        mapParameters.width = selectionBounds.width();
+        mapParameters.height = selectionBounds.height();
+        mapParameters.infinite = false;
+        auto copyMap = std::make_unique<Map>(mapParameters);
 
-        copyMap->setRenderOrder(map->renderOrder());
-        copyMap->addLayer(std::move(copy));
+        map->copyLayers(mapDocument->selectedLayers(), selectedArea, *copyMap);
 
-        stamp.addVariation(std::move(copyMap));
+        if (map->layerCount() > 0) {
+            copyMap->normalizeTileLayerPositionsAndMapSize();
+            copyMap->addTilesets(copyMap->usedTilesets());
+            stamp.addVariation(std::move(copyMap));
+        }
     }
 
     return stamp;
@@ -218,7 +214,7 @@ void TileStampManager::loadStamps()
         const QByteArray data = stampFile.readAll();
         const QJsonDocument document = QJsonDocument::fromJson(data, &error);
         if (error.error != QJsonParseError::NoError) {
-            qDebug().noquote() << "Failed to parse stamp file:" << error.errorString();
+            qDebug().noquote() << "Failed to parse stamp file:" << Utils::Error::jsonParseError(error);
             continue;
         }
 

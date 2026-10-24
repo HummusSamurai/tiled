@@ -42,7 +42,7 @@ class ObjectIconManager
 public:
     static const ObjectIconManager &instance();
 
-    const QIcon &iconForObject(MapObject *object) const;
+    const QIcon &iconForObject(const MapObject &object) const;
 
 private:
     ObjectIconManager();
@@ -52,6 +52,7 @@ private:
     const QIcon mPolygonIcon;
     const QIcon mPolylineIcon;
     const QIcon mEllipseIcon;
+    const QIcon mCapsuleIcon;
     const QIcon mTextIcon;
     const QIcon mPointIcon;
 };
@@ -72,7 +73,7 @@ public:
 
     enum Column {
         Name,
-        Type,
+        Class,
         Id,
         Position,
         LastColumn = Position,
@@ -105,21 +106,25 @@ public:
 
     void setMapDocument(MapDocument *mapDocument);
     MapDocument *mapDocument() const { return mMapDocument; }
+    void languageChanged();
 
     void moveObjects(ObjectGroup *og, int from, int to, int count);
+
+    QIcon objectGroupIcon() const;
 
 private:
     void layerAdded(Layer *layer);
     void layerAboutToBeRemoved(GroupLayer *groupLayer, int index);
-    void tileTypeChanged(Tile *tile);
+    void classChanged(const QList<Object *> &objects);
     void documentChanged(const ChangeEvent &change);
 
     void emitDataChanged(const QList<MapObject *> &objects,
                          const QVarLengthArray<Column, 3> &columns,
                          const QVector<int> &roles = QVector<int>());
 
-    MapDocument *mMapDocument;
-    Map *mMap;
+    Map *map() const;
+
+    MapDocument *mMapDocument = nullptr;
 
     // cache
     mutable QMap<GroupLayer*, QList<Layer*>> mFilteredLayers;
@@ -127,5 +132,10 @@ private:
 
     QIcon mObjectGroupIcon;
 };
+
+inline QIcon MapObjectModel::objectGroupIcon() const
+{
+    return mObjectGroupIcon;
+}
 
 } // namespace Tiled

@@ -32,40 +32,91 @@
 #include "isometricrenderer.h"
 #include "map.h"
 #include "mapobject.h"
+#include "obliquerenderer.h"
+#include "objectgroup.h"
 #include "orthogonalrenderer.h"
+#include "staggeredrenderer.h"
 #include "tile.h"
 #include "tilelayer.h"
-#include "objectgroup.h"
 
+#include <QCache>
 #include <QPaintEngine>
 #include <QPainter>
 #include <QVector2D>
 
-#include "qtcompat_p.h"
-
 #include <cmath>
-#include <memory>
 
 using namespace Tiled;
 
-static QPixmap tinted(const QPixmap &pixmap, const QColor &color)
+struct TintedKey
 {
-    if (!color.isValid() || color == QColor(255, 255, 255, 255))
+    const qint64 pixmapKey;
+    const QRect rect;
+    const QColor color;
+
+    bool operator==(const TintedKey &o) const
+    {
+        return pixmapKey == o.pixmapKey &&
+                rect == o.rect &&
+                color == o.color;
+    }
+};
+
+size_t qHash(const TintedKey &key, size_t seed) Q_DECL_NOTHROW
+{
+    return qHashMulti(seed, key.pixmapKey, key.rect, key.color.rgba());
+}
+
+// Borrowed from qpixmapcache.cpp
+static inline qsizetype cost(const QPixmap &pixmap)
+{
+    // make sure to do a 64bit calculation; qsizetype might be smaller
+    const qint64 costKb = static_cast<qint64>(pixmap.width())
+                        * pixmap.height() * pixmap.depth() / (8 * 1024);
+    const qint64 costMax = std::numeric_limits<qsizetype>::max();
+    // a small pixmap should have at least a cost of 1(kb)
+    return static_cast<qsizetype>(qBound(1LL, costKb, costMax));
+}
+
+static bool needsTint(const QColor &color)
+{
+    return color.isValid() &&
+            color != QColor(255, 255, 255, 255);
+}
+
+static QPixmap tinted(const QPixmap &pixmap, const QRect &rect, const QColor &color)
+{
+    if (pixmap.isNull() || !needsTint(color))
         return pixmap;
 
-    QPixmap resultImage = pixmap;
+    // Cache for up to 100 MB of tinted pixmaps, since tinting is expensive
+    static QCache<TintedKey, QPixmap> cache { 100 * 1024 };
+
+    const TintedKey tintedKey { pixmap.cacheKey(), rect, color };
+    if (auto cached = cache.object(tintedKey))
+        return *cached;
+
+    QPixmap resultImage = pixmap.copy(rect);
+
+    // tinting with a non-fully opaque color needs an alpha channel to work properly
+    if (color.alpha() < 255 && !resultImage.hasAlphaChannel()) {
+        auto imageWithAlpha = resultImage.toImage();
+        imageWithAlpha.convertTo(QImage::Format_ARGB32_Premultiplied);
+        resultImage = QPixmap::fromImage(std::move(imageWithAlpha), Qt::NoOpaqueDetection);
+    }
+
     QPainter painter(&resultImage);
 
     QColor fullOpacity = color;
     fullOpacity.setAlpha(255);
-    // tint the final color (this will will mess up the alpha which we will fix
-    // in the next lines)
+    // tint the final color (this will mess up the alpha which we will fix in
+    // the next lines)
     painter.setCompositionMode(QPainter::CompositionMode_Multiply);
     painter.fillRect(resultImage.rect(), fullOpacity);
 
     // apply the original alpha to the final image
     painter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-    painter.drawPixmap(0, 0, pixmap);
+    painter.drawPixmap(resultImage.rect(), pixmap, rect);
 
     // apply the alpha of the tint color so that we can use it to make the image
     // transparent instead of just increasing or decreasing the tint effect
@@ -74,15 +125,33 @@ static QPixmap tinted(const QPixmap &pixmap, const QColor &color)
 
     painter.end();
 
+    cache.insert(tintedKey, new QPixmap(resultImage), cost(resultImage));
+
     return resultImage;
 }
 
 MapRenderer::~MapRenderer()
 {}
 
+QRect MapRenderer::mapBoundingRect() const
+{
+    return boundingRect(map()->tileBoundingRect());
+}
+
 QRectF MapRenderer::boundingRect(const ImageLayer *imageLayer) const
 {
-    return QRectF(QPointF(), imageLayer->image().size());
+    QRectF bounds = QRectF(QPointF(), imageLayer->image().size());
+
+    if (imageLayer->repeatX()) {
+        bounds.setLeft(INT_MIN / 512);
+        bounds.setRight(INT_MAX / 256);
+    }
+    if (imageLayer->repeatY()) {
+        bounds.setTop(INT_MIN / 512);
+        bounds.setBottom(INT_MAX / 256);
+    }
+
+    return bounds;
 }
 
 QPainterPath MapRenderer::pointShape(const QPointF &position) const
@@ -113,9 +182,16 @@ void MapRenderer::drawImageLayer(QPainter *painter,
                                  const ImageLayer *imageLayer,
                                  const QRectF &exposed) const
 {
-    Q_UNUSED(exposed)
-
-    painter->drawPixmap(QPointF(), tinted(imageLayer->image(), imageLayer->effectiveTintColor()));
+    painter->save();
+    painter->setBrush(tinted(imageLayer->image(),
+                             imageLayer->image().rect(),
+                             imageLayer->effectiveTintColor()));
+    painter->setPen(Qt::NoPen);
+    if (exposed.isNull())
+        painter->drawRect(boundingRect(imageLayer));
+    else
+        painter->drawRect(boundingRect(imageLayer) & exposed);
+    painter->restore();
 }
 
 void MapRenderer::drawPointObject(QPainter *painter, const QColor &color) const
@@ -174,6 +250,18 @@ QPainterPath MapRenderer::pointInteractionShape(const MapObject *object) const
     return path;
 }
 
+QPointF MapRenderer::snapToGrid(const QPointF &pixelCoords, int subdivisions) const
+{
+    QPointF tileCoords = pixelToTileCoords(pixelCoords);
+    if (subdivisions > 1) {
+        tileCoords = (tileCoords * subdivisions).toPoint();
+        tileCoords /= subdivisions;
+    } else {
+        tileCoords = tileCoords.toPoint();
+    }
+    return tileToPixelCoords(tileCoords);
+}
+
 void MapRenderer::drawTileLayer(QPainter *painter, const TileLayer *layer, const QRectF &exposed) const
 {
     const QSize tileSize = map()->tileSize();
@@ -188,8 +276,8 @@ void MapRenderer::drawTileLayer(QPainter *painter, const TileLayer *layer, const
     // the grid size because this has already been taken into account by
     // boundingRect.
     QMargins drawMargins = layer->drawMargins();
-    drawMargins.setTop(drawMargins.top() - tileSize.height());
-    drawMargins.setRight(drawMargins.right() - tileSize.width());
+    drawMargins.setTop(qMax(0, drawMargins.top() - tileSize.height()));
+    drawMargins.setRight(qMax(0, drawMargins.right() - tileSize.width()));
     rect.adjust(-drawMargins.right(),
                 -drawMargins.bottom(),
                 drawMargins.left(),
@@ -200,8 +288,13 @@ void MapRenderer::drawTileLayer(QPainter *painter, const TileLayer *layer, const
     auto tileRenderFunction = [layer, &renderer, tileSize](QPoint tilePos, const QPointF &screenPos) {
         const Cell &cell = layer->cellAt(tilePos - layer->position());
         if (!cell.isEmpty()) {
-            const Tile *tile = cell.tile();
-            const QSize size = (tile && !tile->image().isNull()) ? tile->size() : tileSize;
+            QSize size = tileSize;
+
+            if (cell.tileset()->tileRenderSize() == Tileset::TileSize) {
+                if (const Tile *tile = cell.tile())
+                    size = tile->size();
+            }
+
             renderer.render(cell, screenPos, size, CellRenderer::BottomLeft);
         }
     };
@@ -211,14 +304,7 @@ void MapRenderer::drawTileLayer(QPainter *painter, const TileLayer *layer, const
 
 void MapRenderer::setFlag(RenderFlag flag, bool enabled)
 {
-#if QT_VERSION >= 0x050700
     mFlags.setFlag(flag, enabled);
-#else
-    if (enabled)
-        mFlags |= flag;
-    else
-        mFlags &= ~flag;
-#endif
 }
 
 /**
@@ -242,7 +328,28 @@ QPolygonF MapRenderer::lineToPolygon(const QPointF &start, const QPointF &end)
     return polygon;
 }
 
-QPen MapRenderer::makeGridPen(const QPaintDevice *device, QColor color)
+/**
+ * Returns a MapRenderer instance matching the orientation of the map.
+ */
+std::unique_ptr<MapRenderer> MapRenderer::create(const Map *map)
+{
+    switch (map->orientation()) {
+    case Map::Isometric:
+        return std::make_unique<IsometricRenderer>(map);
+    case Map::Staggered:
+        return std::make_unique<StaggeredRenderer>(map);
+    case Map::Hexagonal:
+        return std::make_unique<HexagonalRenderer>(map);
+    case Map::Oblique:
+        return std::make_unique<ObliqueRenderer>(map);
+    default:
+        return std::make_unique<OrthogonalRenderer>(map);
+    }
+}
+
+void MapRenderer::setupGridPens(const QPaintDevice *device, QColor color,
+                                QPen &gridPen, QPen &majorGridPen, int gridSize,
+                                QSize gridMajor) const
 {
     const qreal devicePixelRatio = device->devicePixelRatioF();
 
@@ -252,14 +359,21 @@ QPen MapRenderer::makeGridPen(const QPaintDevice *device, QColor color)
     const qreal dpiScale = device->logicalDpiX() / 96.0;
 #endif
 
-    const qreal dashLength = std::ceil(2.0 * dpiScale * devicePixelRatio);
+    const auto majorGridSize = qMax(gridMajor.width(), gridMajor.height()) * gridSize;
+    const qreal dashLength = std::ceil(2.0 * dpiScale);
+    const qreal autoAlpha = qBound(0.0, (gridSize * mPainterScale - 3) / 17.0, 1.0);
+    const qreal majorAutoAlpha = qBound(0.0, (majorGridSize * mPainterScale - 3) / 17.0, 1.0);
 
-    color.setAlpha(128);
+    color.setAlpha(96 * autoAlpha);
 
-    QPen pen(color);
-    pen.setCosmetic(true);
-    pen.setDashPattern({dashLength, dashLength});
-    return pen;
+    gridPen = QPen(color, 1.0 * devicePixelRatio);
+    gridPen.setCosmetic(true);
+    gridPen.setDashPattern({dashLength, dashLength});
+
+    color.setAlpha(96 * autoAlpha + 96 * majorAutoAlpha);
+
+    majorGridPen = gridPen;
+    majorGridPen.setColor(color);
 }
 
 
@@ -282,9 +396,12 @@ static void renderMissingImageMarker(QPainter &painter, const QRectF &rect)
 
 static bool hasOpenGLEngine(const QPainter *painter)
 {
-    const QPaintEngine::Type type = painter->paintEngine()->type();
-    return (type == QPaintEngine::OpenGL ||
-            type == QPaintEngine::OpenGL2);
+    if (auto paintEngine = painter->paintEngine()) {
+        const QPaintEngine::Type type = paintEngine->type();
+        return (type == QPaintEngine::OpenGL ||
+                type == QPaintEngine::OpenGL2);
+    }
+    return false;
 }
 
 CellRenderer::CellRenderer(QPainter *painter, const MapRenderer *renderer, const QColor &tintColor)
@@ -311,7 +428,7 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
 {
     const Tile *tile = cell.tile();
 
-    if (tile)
+    if (tile && mRenderer->testFlag(ShowTileAnimations))
         tile = tile->currentFrameTile();
 
     if (!tile || tile->image().isNull()) {
@@ -330,29 +447,41 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
         flush();
 
     const QPixmap &image = tile->image();
-    const QSizeF imageSize = image.size();
-    if (imageSize.isEmpty())
+    QRect imageRect = tile->imageRect();
+    if (imageRect.isEmpty())
         return;
 
-    const QSizeF scale(size.width() / imageSize.width(), size.height() / imageSize.height());
+    if (needsTint(mTintColor))
+        imageRect.moveTopLeft(QPoint(0, 0));
+
     const QPoint offset = tile->offset();
-    const QPointF sizeHalf = QPointF(size.width() / 2, size.height() / 2);
+    const QPointF sizeHalf { size.width() / 2, size.height() / 2 };
 
     bool flippedHorizontally = cell.flippedHorizontally();
     bool flippedVertically = cell.flippedVertically();
 
     QPainter::PixmapFragment fragment;
     // Calculate the position as if the origin is TopLeft, and correct it later.
-    fragment.x = screenPos.x() + (offset.x() * scale.width()) + sizeHalf.x();
-    fragment.y = screenPos.y() + (offset.y() * scale.height()) + sizeHalf.y();
-    fragment.sourceLeft = 0;
-    fragment.sourceTop = 0;
-    fragment.width = imageSize.width();
-    fragment.height = imageSize.height();
-    fragment.scaleX = flippedHorizontally ? -1 : 1;
-    fragment.scaleY = flippedVertically ? -1 : 1;
+    fragment.x = screenPos.x() + sizeHalf.x();
+    fragment.y = screenPos.y() + sizeHalf.y();
+    fragment.sourceLeft = imageRect.x();
+    fragment.sourceTop = imageRect.y();
+    fragment.width = imageRect.width();
+    fragment.height = imageRect.height();
+    fragment.scaleX = size.width() / imageRect.width();
+    fragment.scaleY = size.height() / imageRect.height();
     fragment.rotation = 0;
     fragment.opacity = 1;
+
+    const auto fillMode = tile->tileset()->fillMode();
+    if (fillMode == Tileset::PreserveAspectFit) {
+        const auto minScale = std::min(fragment.scaleX, fragment.scaleY);
+        fragment.scaleX = minScale;
+        fragment.scaleY = minScale;
+    }
+
+    fragment.x += offset.x() * fragment.scaleX;
+    fragment.y += offset.y() * fragment.scaleY;
 
     // Correct the position if the origin is BottomLeft.
     if (origin == BottomLeft)
@@ -378,10 +507,16 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
         fragment.x += halfDiff;
     }
 
-    fragment.scaleX = scale.width() * (flippedHorizontally ? -1 : 1);
-    fragment.scaleY = scale.height() * (flippedVertically ? -1 : 1);
+    fragment.scaleX *= flippedHorizontally ? -1 : 1;
+    fragment.scaleY *= flippedVertically ? -1 : 1;
 
+    // Avoid using drawPixmapFragments with OpenGL in Qt 6.4.1 and above
+    // (https://bugreports.qt.io/browse/QTBUG-111416)
+#if QT_VERSION < QT_VERSION_CHECK(6, 4, 1) || QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     if (mIsOpenGL || (fragment.scaleX > 0 && fragment.scaleY > 0)) {
+#else
+    if (!mIsOpenGL && fragment.scaleX > 0 && fragment.scaleY > 0) {
+#endif
         mTile = tile;
         mFragments.append(fragment);
         return;
@@ -400,10 +535,11 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
 
     const QRectF target(fragment.width * -0.5, fragment.height * -0.5,
                         fragment.width, fragment.height);
-    const QRectF source(0, 0, fragment.width, fragment.height);
+    const QRectF source(fragment.sourceLeft, fragment.sourceTop,
+                        fragment.width, fragment.height);
 
     mPainter->setTransform(transform);
-    mPainter->drawPixmap(target, tinted(image, mTintColor), source);
+    mPainter->drawPixmap(target, tinted(image, tile->imageRect(), mTintColor), source);
     mPainter->setTransform(oldTransform);
 
     // A bit of a hack to still draw tile collision shapes when requested
@@ -414,7 +550,7 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
         mFragments.append(fragment);
         paintTileCollisionShapes();
         mTile = nullptr;
-        mFragments.resize(0);
+        mFragments.clear();
     }
 }
 
@@ -428,7 +564,9 @@ void CellRenderer::flush()
 
     mPainter->drawPixmapFragments(mFragments.constData(),
                                   mFragments.size(),
-                                  tinted(mTile->image(), mTintColor));
+                                  tinted(mTile->image(),
+                                         mTile->imageRect(),
+                                         mTintColor));
 
     if (mRenderer->flags().testFlag(ShowTileCollisionShapes)
             && mTile->objectGroup()
@@ -437,7 +575,7 @@ void CellRenderer::flush()
     }
 
     mTile = nullptr;
-    mFragments.resize(0);
+    mFragments.clear();
 }
 
 /**
@@ -456,18 +594,15 @@ static QTransform rotateAt(const QPointF &position, qreal rotation)
 void CellRenderer::paintTileCollisionShapes()
 {
     const Tileset *tileset = mTile->tileset();
-    const Map map(tileset->orientation() == Tileset::Orthogonal ? Map::Orthogonal
-                                                                : Map::Isometric,
-                  QSize(1, 1),
-                  tileset->gridSize());
-
-    std::unique_ptr<MapRenderer> renderer;
-
     const bool isIsometric = tileset->orientation() == Tileset::Isometric;
-    if (isIsometric)
-        renderer = std::make_unique<IsometricRenderer>(&map);
-    else
-        renderer = std::make_unique<OrthogonalRenderer>(&map);
+    Map::Parameters mapParameters;
+    mapParameters.orientation = isIsometric ? Map::Isometric : Map::Orthogonal;
+    mapParameters.width = 1;
+    mapParameters.height = 1;
+    mapParameters.tileWidth = tileset->gridSize().width();
+    mapParameters.tileHeight = tileset->gridSize().height();
+    const Map map(mapParameters);
+    const auto renderer = MapRenderer::create(&map);
 
     const qreal lineWidth = mRenderer->objectLineWidth();
     const qreal shadowDist = (lineWidth == 0 ? 1 : lineWidth) / mRenderer->painterScale();
@@ -482,7 +617,7 @@ void CellRenderer::paintTileCollisionShapes()
 
     mPainter->setRenderHint(QPainter::Antialiasing);
 
-    for (const auto &fragment : qAsConst(mFragments)) {
+    for (const auto &fragment : std::as_const(mFragments)) {
         QTransform tileTransform;
         tileTransform.translate(fragment.x, fragment.y);
         tileTransform.rotate(fragment.rotation);

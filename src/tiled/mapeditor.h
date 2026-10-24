@@ -26,7 +26,6 @@
 
 #include "clipboardmanager.h"
 #include "editor.h"
-#include "tiled.h"
 #include "tileset.h"
 
 #include <memory>
@@ -44,8 +43,9 @@ namespace Tiled {
 class AbstractTool;
 class BucketFillTool;
 class ComboBoxProxyModel;
-class EditableMap;
 class EditPolygonTool;
+class EditableMap;
+class EditableWangSet;
 class LayerDock;
 class MapDocument;
 class MapView;
@@ -67,13 +67,16 @@ class WangBrush;
 class WangDock;
 class Zoomable;
 
-class MapEditor : public Editor
+class MapEditor final : public Editor
 {
     Q_OBJECT
 
-    Q_PROPERTY(Tiled::TilesetDock *tilesetsView READ tilesetDock)
-    Q_PROPERTY(Tiled::EditableMap *currentBrush READ currentBrush WRITE setCurrentBrush)
-    Q_PROPERTY(Tiled::MapView *currentMapView READ currentMapView)
+    Q_PROPERTY(Tiled::TilesetDock *tilesetsView READ tilesetDock CONSTANT)
+    Q_PROPERTY(Tiled::EditableMap *currentBrush READ currentBrush WRITE setCurrentBrush NOTIFY currentBrushChanged)
+    Q_PROPERTY(Tiled::EditableWangSet *currentWangSet READ currentWangSet WRITE setCurrentWangSet NOTIFY currentWangSetChanged)
+    Q_PROPERTY(int currentWangColorIndex READ currentWangColorIndex WRITE setCurrentWangColorIndex NOTIFY currentWangColorIndexChanged)
+    Q_PROPERTY(Tiled::MapView *currentMapView READ currentMapView CONSTANT)
+    Q_PROPERTY(Tiled::AbstractTool *selectedTool READ selectedTool WRITE setSelectedTool NOTIFY selectedToolChanged)
 
 public:
     explicit MapEditor(QObject *parent = nullptr);
@@ -116,15 +119,30 @@ public:
     EditableMap *currentBrush() const;
     void setCurrentBrush(EditableMap *editableMap);
 
+    EditableWangSet *currentWangSet() const;
+    void setCurrentWangSet(EditableWangSet *wangSet);
+
+    int currentWangColorIndex() const;
+    void setCurrentWangColorIndex(int newIndex);
+
     void addExternalTilesets(const QStringList &fileNames);
 
     QAction *actionSelectNextTileset() const;
     QAction *actionSelectPreviousTileset() const;
 
     AbstractTool *selectedTool() const;
+    void setSelectedTool(AbstractTool *tool);
+
+    Q_INVOKABLE AbstractTool *tool(const QByteArray &id) const;
+
+signals:
+    void currentBrushChanged();
+    void currentWangSetChanged();
+    void currentWangColorIndexChanged(int colorIndex);
+    void selectedToolChanged(AbstractTool *tool);
 
 private:
-    void setSelectedTool(AbstractTool *tool);
+    void onSelectedToolChanged(AbstractTool *tool);
     void currentDocumentChanged(Document *document);
     void updateActiveUndoStack();
 
@@ -149,6 +167,7 @@ private:
     void updateLayerComboIndex();
 
     void setupQuickStamps();
+    void setUseOpenGL(bool useOpenGL);
     void retranslateUi();
     void showTileCollisionShapesChanged(bool enabled);
     void parallaxEnabledChanged(bool enabled);
@@ -207,6 +226,11 @@ inline MapView *MapEditor::viewForDocument(MapDocument *mapDocument) const
 inline MapView *MapEditor::currentMapView() const
 {
     return viewForDocument(mCurrentMapDocument);
+}
+
+inline AbstractTool *MapEditor::selectedTool() const
+{
+    return mSelectedTool;
 }
 
 } // namespace Tiled

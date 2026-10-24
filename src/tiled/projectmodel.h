@@ -21,10 +21,12 @@
 #pragma once
 
 #include "filesystemwatcher.h"
-#include "project.h"
+#include "projectdocument.h"
 
 #include <QAbstractListModel>
+#include <QCollator>
 #include <QFileIconProvider>
+#include <QSortFilterProxyModel>
 #include <QThread>
 #include <QTimer>
 
@@ -41,8 +43,10 @@ struct FolderEntry
     {}
 
     QString filePath;
+    QIcon fileIcon;     // initialized on-demand
     std::vector<std::unique_ptr<FolderEntry>> entries;
     FolderEntry *parent = nullptr;
+    bool isDir = false;
 };
 
 class ProjectModel : public QAbstractItemModel
@@ -50,13 +54,20 @@ class ProjectModel : public QAbstractItemModel
     Q_OBJECT
 
 public:
+    // Custom role to expose cached isDir flag to ProjectProxyModel,
+    // avoiding expensive QFileInfo::isDir() calls during sorting
+    enum UserRoles {
+        IsDirRole = Qt::UserRole
+    };
+
     explicit ProjectModel(QObject *parent = nullptr);
     ~ProjectModel() override;
 
     void updateNameFilters();
 
-    void setProject(Project project);
+    void setProject(std::unique_ptr<Project> project);
     Project &project();
+    EditableAsset *editableProject();
 
     void addFolder(const QString &folder);
     void removeFolder(int row);
@@ -67,11 +78,7 @@ public:
         int offset;
         QString path;
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-        QStringRef relativePath() const { return path.midRef(offset); }
-#else
         QStringView relativePath() const { return QStringView(path).mid(offset); }
-#endif
     };
 
     QVector<Match> findFiles(const QStringList &words) const;
@@ -113,7 +120,8 @@ private:
     void scheduleFolderScan(const QString &folder);
     void folderScanned(FolderEntry *entry);
 
-    Project mProject;
+    std::unique_ptr<ProjectDocument> mProjectDocument;
+    Project mEmptyProject;
     QFileIconProvider mFileIconProvider;
     QStringList mNameFilters;
     QTimer mUpdateNameFiltersTimer;
@@ -126,10 +134,23 @@ private:
     FileSystemWatcher mWatcher;
 };
 
-
-inline Project &ProjectModel::project()
+/**
+ * Proxy model that provides sorting for the ProjectModel without requiring
+ * a full rescan when the sort order changes.
+ */
+class ProjectProxyModel : public QSortFilterProxyModel
 {
-    return mProject;
-}
+    Q_OBJECT
+
+public:
+    explicit ProjectProxyModel(QObject *parent = nullptr);
+
+protected:
+    bool lessThan(const QModelIndex &left,
+                  const QModelIndex &right) const override;
+
+private:
+    QCollator mCollator;
+};
 
 } // namespace Tiled

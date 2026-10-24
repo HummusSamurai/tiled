@@ -22,7 +22,6 @@
 
 #include "changeproperties.h"
 #include "editableasset.h"
-#include "editablemanager.h"
 #include "editablemapobject.h"
 #include "map.h"
 #include "mapobject.h"
@@ -30,6 +29,7 @@
 #include "scriptmanager.h"
 
 #include <QCoreApplication>
+#include <QQmlEngine>
 
 namespace Tiled {
 
@@ -40,6 +40,8 @@ EditableObject::EditableObject(EditableAsset *asset,
     , mAsset(asset)
     , mObject(object)
 {
+    if (object)
+        object->mEditable = this;
 }
 
 bool EditableObject::isReadOnly() const
@@ -47,20 +49,34 @@ bool EditableObject::isReadOnly() const
     return asset() && asset()->isReadOnly();
 }
 
-void EditableObject::setProperty(const QString &name, const QVariant &value)
+void EditableObject::setPropertyImpl(const QString &name, const QVariant &value)
 {
     if (Document *doc = document())
-        asset()->push(new SetProperty(doc, { mObject }, name, fromScript(value)));
-    else
-        mObject->setProperty(name, fromScript(value));
+        asset()->push(new SetProperty(doc, { mObject }, name, propertyValueFromScript(value)));
+    else if (!checkReadOnly())
+        mObject->setProperty(name, propertyValueFromScript(value));
+}
+
+void EditableObject::setPropertyImpl(const QStringList &path, const QVariant &value)
+{
+    if (path.isEmpty()) {
+        ScriptManager::instance().throwError(QCoreApplication::translate("Script Errors", "Invalid argument"));
+        return;
+    }
+
+    if (Document *doc = document())
+        // todo: add support for array indices in path
+        asset()->push(new SetProperty(doc, { mObject }, toPropertyPath(path), propertyValueFromScript(value)));
+    else if (!checkReadOnly())
+        mObject->setProperty(toPropertyPath(path), propertyValueFromScript(value));
 }
 
 void EditableObject::setProperties(const QVariantMap &properties)
 {
     if (Document *doc = document())
-        asset()->push(new ChangeProperties(doc, QString(), mObject, fromScript(properties)));
-    else
-        mObject->setProperties(fromScript(properties));
+        asset()->push(new ChangeProperties(doc, QString(), mObject, propertyValueFromScript(properties)));
+    else if (!checkReadOnly())
+        mObject->setProperties(propertyValueFromScript(properties));
 }
 
 void EditableObject::removeProperty(const QString &name)
@@ -76,6 +92,46 @@ Document *EditableObject::document() const
     return asset() ? asset()->document() : nullptr;
 }
 
+void EditableObject::setObject(Object *object)
+{
+    if (mObject == object)
+        return;
+
+    if (mObject)
+        mObject->mEditable = nullptr;
+
+    if (object)
+        object->mEditable = this;
+
+    mObject = object;
+}
+
+void EditableObject::setClassName(const QString &className)
+{
+    if (Document *doc = document())
+        asset()->push(new ChangeClassName(doc, { object() }, className));
+    else if (!checkReadOnly())
+        object()->setClassName(className);
+}
+
+bool EditableObject::moveOwnershipToJavaScript()
+{
+    // The object needs to be associated with a JS engine already
+    if (!qjsEngine(this))
+        return false;
+
+    QQmlEngine::setObjectOwnership(this, QQmlEngine::JavaScriptOwnership);
+    return true;
+}
+
+void EditableObject::moveOwnershipToCpp()
+{
+    QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
+}
+
+/**
+ * When this object is read-only, raises a script error and returns true.
+ */
 bool EditableObject::checkReadOnly() const
 {
     if (isReadOnly()) {
@@ -97,11 +153,12 @@ static Map *mapForObject(Object *object)
         return static_cast<MapObject*>(object)->map();
     case Object::MapType:
         return static_cast<Map*>(object);
-    case Object::ObjectTemplateType:
     case Object::TilesetType:
     case Object::TileType:
     case Object::WangSetType:
     case Object::WangColorType:
+    case Object::ProjectType:
+    case Object::WorldType:
         break;
     }
     return nullptr;
@@ -113,6 +170,9 @@ QVariant EditableObject::toScript(const QVariant &value) const
 
     if (type == QMetaType::QVariantMap)
         return toScript(value.toMap());
+
+    if (type == QMetaType::QVariantList)
+        return toScript(value.toList());
 
     if (type == objectRefTypeId()) {
         const auto ref = value.value<ObjectRef>();
@@ -132,21 +192,19 @@ QVariant EditableObject::toScript(const QVariant &value) const
         }
 
         if (referencedObject) {
-            auto editable = EditableManager::instance().editableMapObject(asset(), referencedObject);
+            auto editable = EditableMapObject::get(asset(), referencedObject);
             return QVariant::fromValue(editable);
         }
     }
 
-    return value;
-}
+    if (type == propertyValueId()) {
+        auto propertyValue = value.value<PropertyValue>();
+        propertyValue.value = toScript(propertyValue.value);
+        return QVariant::fromValue(propertyValue);
+    }
 
-QVariant EditableObject::fromScript(const QVariant &value) const
-{
-    if (value.userType() == QMetaType::QVariantMap)
-        return fromScript(value.toMap());
-
-    if (auto editableMapObject = value.value<EditableMapObject*>())
-        return QVariant::fromValue(ObjectRef { editableMapObject->id() });
+    if (value.metaType().flags().testFlag(QMetaType::PointerToQObject))
+        return QVariant();
 
     return value;
 }
@@ -159,11 +217,57 @@ QVariantMap EditableObject::toScript(const QVariantMap &value) const
     return converted;
 }
 
-QVariantMap EditableObject::fromScript(const QVariantMap &value) const
+QVariantList EditableObject::toScript(const QVariantList &value) const
+{
+    QVariantList converted;
+    converted.reserve(value.size());
+    for (const QVariant &element : value)
+        converted.append(toScript(element));
+    return converted;
+}
+
+QVariant EditableObject::propertyValueFromScript(const QVariant &value)
+{
+    const int type = value.userType();
+
+    if (type == QMetaType::QVariantMap)
+        return propertyValueFromScript(value.toMap());
+
+    if (type == QMetaType::QVariantList)
+        return propertyValueFromScript(value.toList());
+
+    if (auto editableMapObject = value.value<EditableMapObject*>())
+        return QVariant::fromValue(ObjectRef { editableMapObject->id() });
+
+    if (type == propertyValueId()) {
+        auto propertyValue = value.value<PropertyValue>();
+        propertyValue.value = propertyValueFromScript(propertyValue.value);
+        return QVariant::fromValue(propertyValue);
+    }
+
+    if (value.metaType().flags().testFlag(QMetaType::PointerToQObject)) {
+        ScriptManager::instance().throwError(
+                    QCoreApplication::translate("Script Errors", "Cannot store object pointer as property value"));
+        return QVariant();
+    }
+
+    return value;
+}
+
+QVariantMap EditableObject::propertyValueFromScript(const QVariantMap &value)
 {
     QVariantMap converted(value);
     for (auto i = converted.begin(); i != converted.end(); ++i)
-        i.value() = fromScript(i.value());
+        i.value() = propertyValueFromScript(i.value());
+    return converted;
+}
+
+QVariantList EditableObject::propertyValueFromScript(const QVariantList &value)
+{
+    QVariantList converted;
+    converted.reserve(value.size());
+    for (const QVariant &element : value)
+        converted.append(propertyValueFromScript(element));
     return converted;
 }
 

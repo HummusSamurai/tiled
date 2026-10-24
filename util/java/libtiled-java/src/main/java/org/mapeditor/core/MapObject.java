@@ -2,9 +2,9 @@
  * #%L
  * This file is part of libtiled-java.
  * %%
- * Copyright (C) 2004 - 2019 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2004 - 2019 Adam Turk <aturk@biggeruniverse.com>
- * Copyright (C) 2016 - 2019 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2004 - 2020 Adam Turk <aturk@biggeruniverse.com>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -30,22 +30,26 @@
  */
 package org.mapeditor.core;
 
+import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.Rectangle2D;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 
-import javax.imageio.ImageIO;
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
+import org.mapeditor.util.ImageHelper;
+
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
 
 
 /**
  * An object occupying an {@link org.mapeditor.core.ObjectGroup}.
  *
- * @version 1.2.3
+ * @version 1.4.2
  */
 @XmlAccessorType(XmlAccessType.NONE)
 public class MapObject extends MapObjectData implements Cloneable {
@@ -54,11 +58,12 @@ public class MapObject extends MapObjectData implements Cloneable {
     private Shape shape = new Rectangle();
     private String imageSource;
     private Image image;
-    private Image scaledImage;
+    private BufferedImage scaledImage;
     private Tile tile;
     private boolean flipHorizontal;
     private boolean flipVertical;
     private boolean flipDiagonal;
+    private boolean rotatedHexagonal120;
 
     /**
      * Constructor for MapObject.
@@ -69,8 +74,6 @@ public class MapObject extends MapObjectData implements Cloneable {
         this.name = "";
         this.type = "";
         this.imageSource = "";
-        this.flipHorizontal = false;
-        this.flipVertical = false;
     }
 
     /**
@@ -179,9 +182,9 @@ public class MapObject extends MapObjectData implements Cloneable {
         imageSource = source;
 
         // Attempt to read the image
-        if (imageSource.length() > 0) {
+        if (!imageSource.isEmpty()) {
             try {
-                image = ImageIO.read(new File(imageSource));
+                image = ImageHelper.readImage(new File(imageSource));
             } catch (IOException e) {
                 image = null;
             }
@@ -219,6 +222,9 @@ public class MapObject extends MapObjectData implements Cloneable {
     public boolean getFlipDiagonal() { return flipDiagonal; }
     public void setFlipDiagonal(boolean flip) { this.flipDiagonal = flip; }
 
+    public boolean getRotatedHexagonal120() { return rotatedHexagonal120; }
+    public void setRotatedHexagonal120(boolean rotated) { this.rotatedHexagonal120 = rotated; }
+
     /**
      * Returns the image to be used when drawing this object. This image is
      * scaled to the size of the object.
@@ -234,10 +240,15 @@ public class MapObject extends MapObjectData implements Cloneable {
         final int zoomedWidth = (int) (getWidth() * zoom);
         final int zoomedHeight = (int) (getHeight() * zoom);
 
-        if (scaledImage == null || scaledImage.getWidth(null) != zoomedWidth
-                || scaledImage.getHeight(null) != zoomedHeight) {
-            scaledImage = image.getScaledInstance(zoomedWidth, zoomedHeight,
-                    Image.SCALE_SMOOTH);
+        if (scaledImage == null || scaledImage.getWidth() != zoomedWidth
+                || scaledImage.getHeight() != zoomedHeight) {
+            scaledImage = new BufferedImage(zoomedWidth, zoomedHeight,
+                    BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = scaledImage.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(image, 0, 0, zoomedWidth, zoomedHeight, null);
+            g.dispose();
         }
 
         return scaledImage;

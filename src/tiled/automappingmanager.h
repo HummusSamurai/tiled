@@ -1,6 +1,7 @@
 /*
  * automappingmanager.h
- * Copyright 2010-2011, Stefan Beller, stefanbeller@googlemail.com
+ * Copyright 2010-2012, Stefan Beller <stefanbeller@googlemail.com>
+ * Copyright 2013-2022, Thorbjørn Lindeijer <bjorn@lindeijer.nl>
  *
  * This file is part of Tiled.
  *
@@ -22,20 +23,27 @@
 
 #include "session.h"
 
+#include <QFileSystemWatcher>
 #include <QObject>
 #include <QRegion>
+#include <QRegularExpression>
 #include <QString>
-#include <QFileSystemWatcher>
 
 #include <memory>
-#include <vector>
+#include <unordered_map>
 
 namespace Tiled {
 
-class Layer;
+class TileLayer;
 
 class AutoMapper;
 class MapDocument;
+
+struct RuleMapReference
+{
+    QString filePath;
+    QRegularExpression mapNameFilter;
+};
 
 /**
  * This class is a superior class to the AutoMapper and AutoMapperWrapper class.
@@ -48,12 +56,13 @@ class AutomappingManager : public QObject
 
 public:
     AutomappingManager(QObject *parent = nullptr);
-    ~AutomappingManager();
+    ~AutomappingManager() override;
 
     void setMapDocument(MapDocument *mapDocument, const QString &rulesFile = QString());
 
-    QString errorString() const { return mError; }
+    void refreshRulesFile(const QString &ruleFileOverride = QString());
 
+    QString errorString() const { return mError; }
     QString warningString() const { return mWarning; }
 
     /**
@@ -77,32 +86,23 @@ signals:
     void warningsOccurred(bool automatic);
 
 private:
-    void onRegionEdited(const QRegion &where, Layer *touchedLayer);
+    void onRegionEdited(const QRegion &where, TileLayer *touchedLayer);
     void onMapFileNameChanged();
-    void onFileChanged();
+    void onFileChanged(const QString &path);
 
-    void refreshRulesFile(const QString &ruleFileOverride = QString());
+    const AutoMapper *findAutoMapper(const QString &filePath);
 
-    /**
-     * This function parses a rules file.
-     * For each path which is a rule, (file extension is tmx) an AutoMapper
-     * object is setup.
-     *
-     * If a file extension is txt, this file will be opened and searched for
-     * rules again.
-     *
-     * @return if the loading was successful: return true if it succeeded.
-     */
     bool loadFile(const QString &filePath);
+    bool loadRulesFile(const QString &filePath);
+    std::unique_ptr<AutoMapper> loadRuleMap(const QString &filePath);
 
     /**
-     * Applies automapping to the Region \a where, considering only layer
-     * \a touchedLayer has changed.
-     * There will only those Automappers be used which have a rule layer
-     * touching the \a touchedLayer
-     * If layer is 0, all Automappers are used.
+     * Applies automapping to the region \a where.
+     *
+     * If a \a touchedLayer is given, only those AutoMappers will be used which
+     * have a rule layer matching the \a touchedLayer.
      */
-    void autoMapInternal(const QRegion &where, Layer *touchedLayer);
+    void autoMapInternal(const QRegion &where, const TileLayer *touchedLayer);
 
     /**
      * deletes all its data structures
@@ -112,19 +112,28 @@ private:
     /**
      * The current map document.
      */
-    MapDocument *mMapDocument;
+    MapDocument *mMapDocument = nullptr;
 
     /**
-     * For each new file of rules a new AutoMapper is setup. In this vector we
-     * can store all of the AutoMappers in order.
+     * For each rule map referenced by the rules file a new AutoMapper is
+     * setup. In this map we store all loaded AutoMappers instances.
      */
-    std::vector<std::unique_ptr<AutoMapper>> mAutoMappers;
+    std::unordered_map<QString, std::unique_ptr<AutoMapper>> mLoadedAutoMappers;
+
+    /**
+     * The active list of rule map references, in the order they were
+     * encountered in the rules file.
+     *
+     * Some loaded rule maps might not be active, and some might be active
+     * multiple times.
+     */
+    QVector<RuleMapReference> mRuleMapReferences;
 
     /**
      * This tells you if the rules for the current map document were already
      * loaded.
      */
-    bool mLoaded;
+    bool mLoaded = false;
 
     /**
      * Contains all errors which occurred until canceling.
@@ -141,6 +150,7 @@ private:
     QFileSystemWatcher mWatcher;
 
     QString mRulesFile;
+    QRegularExpression mMapNameFilter;
     bool mRulesFileOverride = false;
 };
 

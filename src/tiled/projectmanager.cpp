@@ -20,6 +20,9 @@
 
 #include "projectmanager.h"
 
+#include "fileformat.h"
+#include "objecttypes.h"
+#include "preferences.h"
 #include "projectmodel.h"
 
 namespace Tiled {
@@ -34,18 +37,48 @@ ProjectManager::ProjectManager(QObject *parent)
     ourInstance = this;
 }
 
+ProjectManager::~ProjectManager()
+{
+    ourInstance = nullptr;
+}
+
 /**
  * Replaces the current project with the given \a project.
  */
-void ProjectManager::setProject(Project project)
+void ProjectManager::setProject(std::unique_ptr<Project> _project)
 {
-    mProjectModel->setProject(std::move(project));
+    mProjectModel->setProject(std::move(_project));
+
+    auto &project = mProjectModel->project();
+
+    // Automatically import object types if they are referenced by the project
+    if (!project.mObjectTypesFile.isEmpty()) {
+        ObjectTypes objectTypes;
+        const ExportContext context(*project.propertyTypes(),
+                                    QFileInfo(project.mObjectTypesFile).path());
+
+        if (ObjectTypesSerializer().readObjectTypes(project.mObjectTypesFile, objectTypes, context)) {
+            project.propertyTypes()->mergeObjectTypes(objectTypes);
+            project.mObjectTypesFile.clear();
+        }
+    }
+
+    Preferences *prefs = Preferences::instance();
+    prefs->setPropertyTypes(project.propertyTypes());
+
+    FileFormat::setCompatibilityVersion(project.mCompatibilityVersion);
+
     emit projectChanged();
 }
 
 Project &ProjectManager::project()
 {
     return mProjectModel->project();
+}
+
+EditableAsset *ProjectManager::editableProject()
+{
+    return mProjectModel->editableProject();
 }
 
 } // namespace Tiled

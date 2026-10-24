@@ -1,4 +1,4 @@
-import qbs 1.0
+import qbs.FileInfo
 
 StaticLibrary {
     name: "qtsingleapplication"
@@ -7,7 +7,15 @@ StaticLibrary {
     Depends { name: "Qt"; submodules: ["widgets", "network"]; versionAtLeast: "5.4" }
 
     cpp.includePaths: ["src"]
-    cpp.cxxLanguageVersion: "c++14"
+    cpp.cxxLanguageVersion: "c++17"
+    cpp.visibility: "minimal"
+
+    // Avoid wrapping this in a static framework, whose code signing breaks
+    // the install step on macOS 26 with Qbs 3.2.0.
+    Properties {
+        condition: qbs.targetOS.contains("macos")
+        bundle.isBundle: false
+    }
 
     files: [
         "src/qtlocalpeer.cpp",
@@ -18,7 +26,7 @@ StaticLibrary {
 
     Export {
         Depends { name: "cpp" }
-        Depends { name: "Qt.network" }
-        cpp.includePaths: "src"
+        Depends { name: "Qt.widgets" }
+        cpp.includePaths: FileInfo.joinPaths(exportingProduct.sourceDirectory, "src")
     }
 }

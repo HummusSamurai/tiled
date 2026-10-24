@@ -1,54 +1,56 @@
 # General build artifacts
-build/
-bin/
-lib/
-Makefile*
-*.o
-*.qm
-*.moc
-moc_predefs.h
-moc_*.cpp
-ui_*.h
-qrc_*
-*.qmlc
 default/
-moc_predefs.h
 
-# Build artifacts on Windows
-*.dll
-*.obj
-*.a
-*.lib
-*.exp
-*.intermediate.manifest
-*.exe
-*.ilk
-*.pdb
-*uic_wrapper.bat
+# sentry-native sources, built in-tree by CI (see packages.yml)
+/sentry-native/
 
-# Build artifacts on Mac
-.qmake.stash
-translations/phony_target.app
+# Tiled session files
+*.tiled-session
+
+# clangd cache
+.cache/
+compile_commands.json
 
 # Mac stuff
 *.DS_Store
 
-# IDE files
-*.pro.user*
-*.qbs.user*
+# Qt Creator
+*.user*
+*.creator.*
+*.autosave
+build/ 
 
-tests/mapreader/mapreader
-tests/staggeredrenderer/staggeredrenderer
+# Visual Studio
+.vscode/
+*.sln
+*.suo
+*.vcxproj
+*.vcxproj.*
+*.ncb
+*.sdf
+*.opensdf
+
+# CLion / JetBrains IDEs
+.idea/
+*.iws
+*.iml
+*.ipr
 
 # Ronn html outputs
 man/*.1.html
 
-# Doxygen and Sphinx
+# Doxygen (writes its HTML output to ./html, see Doxyfile: HTML_OUTPUT)
 html/
-docs/_build/html/
-docs/_build/gettext/.doctrees
-docs/_build/doctrees/
+
+# Sphinx
+docs/.venv/
 *.mo
+docs/_build/html/
+docs/_build/doctrees/
+# Only the .pot files here are source; ignore the other output the gettext
+# builder writes alongside them (static asset dirs, etc.).
+docs/_build/gettext/*
+!docs/_build/gettext/*.pot
 
 # tsdoc generation results
 docs/scripting-doc/out/
@@ -56,6 +58,8 @@ docs/scripting-doc/node_modules
 
 # Work-in-progress worktrees
 wip/
+
+# Java stuff
 util/java/tmxviewer-java/target
 util/java/libtiled-java/target
 /util/java/target/

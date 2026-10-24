@@ -23,14 +23,21 @@
 
 #include <QColor>
 #include <QDateTime>
+#include <QFont>
 #include <QObject>
 #include <QSettings>
 
-#include "filesystemwatcher.h"
 #include "map.h"
-#include "objecttypes.h"
+#include "tilededitor_global.h"
 
 namespace Tiled {
+
+enum class SnapMode {
+    None = 0,
+    Grid = 1,
+    FineGrid = 2,
+    Pixels = 3
+};
 
 /**
  * This class holds user preferences and provides a convenient interface to
@@ -39,7 +46,7 @@ namespace Tiled {
  * Since it derives from QSettings, you can also store/retrieve arbitrary
  * values. The naming style for groups and keys is CamelCase.
  */
-class Preferences : public QSettings
+class TILED_EDITOR_EXPORT Preferences : public QSettings
 {
     Q_OBJECT
 
@@ -49,20 +56,25 @@ public:
 
 private:
     Preferences();
+    Preferences(const QString &fileName);
     ~Preferences() override;
+
+    void initialize();
 
 public:
     bool showGrid() const;
+    bool showWorldGrid() const;
+    bool snapToWorldGrid() const;
     bool showTileObjectOutlines() const;
     bool showTileAnimations() const;
     bool showTileCollisionShapes() const;
     bool showObjectReferences() const;
     bool parallaxEnabled() const;
-    bool snapToGrid() const;
-    bool snapToFineGrid() const;
-    bool snapToPixels() const;
+    SnapMode snapMode() const;
     QColor gridColor() const;
+    QColor backgroundFadeColor() const;
     int gridFine() const;
+    QSize gridMajor() const;
     qreal objectLineWidth() const;
 
     bool highlightCurrentLayer() const;
@@ -76,7 +88,7 @@ public:
     };
 
     ObjectLabelVisiblity objectLabelVisibility() const;
-    void setObjectLabelVisibility(ObjectLabelVisiblity visiblity);
+    void setObjectLabelVisibility(ObjectLabelVisiblity visibility);
 
     bool labelForHoveredObject() const;
     void setLabelForHoveredObject(bool enabled);
@@ -95,6 +107,11 @@ public:
 
     QColor selectionColor() const;
     void setSelectionColor(const QColor &color);
+
+    bool useCustomFont() const;
+    void setUseCustomFont(bool useCustomFont);
+    QFont customFont() const;
+    void setCustomFont(const QFont &font);
 
     Map::LayerDataFormat layerDataFormat() const;
     void setLayerDataFormat(Map::LayerDataFormat layerDataFormat);
@@ -129,11 +146,9 @@ public:
     bool useOpenGL() const;
     void setUseOpenGL(bool useOpenGL);
 
-    void setObjectTypes(const ObjectTypes &objectTypes);
+    void setPropertyTypes(const SharedPropertyTypes &propertyTypes);
 
-    QString objectTypesFile() const;
     void setObjectTypesFile(const QString &filePath);
-    void setObjectTypesFileLastSaved(const QDateTime &time);
 
     QDate firstRun() const;
     int runCount() const;
@@ -141,9 +156,9 @@ public:
     bool isPatron() const;
     void setPatron(bool isPatron);
 
-    bool shouldShowDonationDialog() const;
-    QDate donationDialogTime() const;
-    void setDonationDialogReminder(const QDate &date);
+    bool shouldShowDonationReminder() const;
+    QDate donationReminderTime() const;
+    void setDonationReminder(const QDate &date);
 
     enum { MaxRecentFiles = 12 };
     void addRecentFile(const QString &fileName);
@@ -155,6 +170,12 @@ public:
     QString startupSession() const;
     void setLastSession(const QString &fileName);
     bool restoreSessionOnStartup() const;
+
+    bool naturalSorting() const;
+    void setNaturalSorting(bool enabled);
+
+    bool repeatShortcutForPreviousTool() const;
+    void setRepeatShortcutForPreviousTool(bool enabled);
 
     bool checkForUpdates() const;
     void setCheckForUpdates(bool on);
@@ -169,24 +190,32 @@ public:
     { return value(QLatin1String(key), defaultValue).template value<T>(); }
 
     static QString homeLocation();
-    static QString dataLocation();
-    static QString configLocation();
+    QString dataLocation() const;
+    QString configLocation() const;
+
+    void emitPropertyTypesChanged();
+    bool isEmittingPropertyTypesChanged() const;
 
     static QString startupProject();
     static void setStartupProject(const QString &filePath);
+    static void setStartupSession(const QString &filePath);
 
 public slots:
     void setShowGrid(bool showGrid);
+    void setShowWorldGrid(bool showWorldGrid);
+    void setSnapToWorldGrid(bool snapToWorldGrid);
     void setShowTileObjectOutlines(bool enabled);
     void setShowTileAnimations(bool enabled);
     void setShowTileCollisionShapes(bool enabled);
     void setShowObjectReferences(bool enabled);
     void setParallaxEnabled(bool enabled);
-    void setSnapToGrid(bool snapToGrid);
-    void setSnapToFineGrid(bool snapToFineGrid);
-    void setSnapToPixels(bool snapToPixels);
+    void setSnapMode(SnapMode snapMode);
     void setGridColor(QColor gridColor);
+    void setBackgroundFadeColor(QColor backgroundFadeColor);
     void setGridFine(int gridFine);
+    void setGridMajor(QSize gridMajor);
+    void setGridMajorX(int gridMajorX);
+    void setGridMajorY(int gridMajorY);
     void setObjectLineWidth(qreal lineWidth);
     void setHighlightCurrentLayer(bool highlight);
     void setHighlightHoveredObject(bool highlight);
@@ -200,16 +229,18 @@ public slots:
 
 signals:
     void showGridChanged(bool showGrid);
+    void showWorldGridChanged(bool showWorldGrid);
+    void snapToWorldGridChanged(bool snapToWorldGrid);
     void showTileObjectOutlinesChanged(bool enabled);
     void showTileAnimationsChanged(bool enabled);
     void showTileCollisionShapesChanged(bool enabled);
     void showObjectReferencesChanged(bool enabled);
     void parallaxEnabledChanged(bool enabled);
-    void snapToGridChanged(bool snapToGrid);
-    void snapToFineGridChanged(bool snapToFineGrid);
-    void snapToPixelsChanged(bool snapToPixels);
+    void snapModeChanged(SnapMode snapMode);
     void gridColorChanged(QColor gridColor);
+    void backgroundFadeColorChanged(QColor backgroundFadeColor);
     void gridFineChanged(int gridFine);
+    void gridMajorChanged(QSize gridMajor);
     void objectLineWidthChanged(qreal lineWidth);
     void highlightCurrentLayerChanged(bool highlight);
     void highlightHoveredObjectChanged(bool highlight);
@@ -220,17 +251,21 @@ signals:
     void applicationStyleChanged(ApplicationStyle);
     void baseColorChanged(const QColor &baseColor);
     void selectionColorChanged(const QColor &selectionColor);
+    void applicationFontChanged();
 
     void useOpenGLChanged(bool useOpenGL);
 
     void languageChanged();
 
-    void objectTypesChanged();
+    // Call emitPropertyTypesChanged() to emit this signal!
+    void propertyTypesChanged();
 
     void isPatronChanged();
 
     void recentFilesChanged();
     void recentProjectsChanged();
+
+    void naturalSortingChanged(bool enabled);
 
     void checkForUpdatesChanged(bool on);
     void displayNewsChanged(bool on);
@@ -240,16 +275,20 @@ signals:
 private:
     void addToRecentFileList(const QString &fileName, QStringList &files);
 
-    void objectTypesFileChangedOnDisk();
-
-    FileSystemWatcher mWatcher;
+    bool mPortable = false;
+    bool mEmittingPropertyTypesChanged = false;
 
     QString mObjectTypesFile;
-    QDateTime mObjectTypesFileLastSaved;
 
     static Preferences *mInstance;
     static QString mStartupProject;
+    static QString mStartupSession;
 };
+
+inline bool Preferences::isEmittingPropertyTypesChanged() const
+{
+    return mEmittingPropertyTypesChanged;
+}
 
 
 template<typename T>
@@ -264,8 +303,8 @@ public:
     inline T get() const;
     inline void set(const T &value);
 
-    inline operator T() const { return get(); }
-    inline Preference &operator =(const T &value) { set(value); return *this; }
+    operator T() const { return get(); }
+    Preference &operator =(const T &value) { set(value); return *this; }
 
 private:
     const char * const mKey;
@@ -287,3 +326,4 @@ void Preference<T>::set(const T &value)
 } // namespace Tiled
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(Tiled::Preferences::ExportOptions)
+Q_DECLARE_METATYPE(Tiled::SnapMode)

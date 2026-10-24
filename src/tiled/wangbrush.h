@@ -1,6 +1,7 @@
 /*
  * wangbrush.h
  * Copyright 2017, Benjamin Trotter <bdtrotte@ucsc.edu>
+ * Copyright 2020, Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
  *
  * This file is part of Tiled.
  *
@@ -21,13 +22,34 @@
 #pragma once
 
 #include "abstracttiletool.h"
+#include "brushitem.h"
+#include "wangfiller.h"
 #include "wangset.h"
+
+#include <QToolBar>
 
 namespace Tiled {
 
-struct FillRegion;
+class WangBrushItem : public BrushItem
+{
+public:
+    WangBrushItem() {}
 
-class WangBrush : public AbstractTileTool
+    QRectF boundingRect() const override;
+
+    void paint(QPainter *painter,
+               const QStyleOptionGraphicsItem *option,
+               QWidget *widget) override;
+
+    void setInvalidTiles(const QRegion &region);
+    bool isValid() const { return mInvalidTiles.isEmpty(); }
+
+private:
+    // The tiles which can't be painted.
+    QRegion mInvalidTiles;
+};
+
+class WangBrush final : public AbstractTileTool
 {
     Q_OBJECT
 
@@ -40,7 +62,7 @@ public:
     };
 
     WangBrush(QObject *parent = nullptr);
-    ~WangBrush();
+    ~WangBrush() override;
 
     void activate(MapScene *scene) override;
 
@@ -53,6 +75,8 @@ public:
     void languageChanged() override;
 
     void setColor(int color);
+
+    void populateToolBar(QToolBar *toolbar) override;
 
 signals:
     void colorCaptured(int color);
@@ -81,7 +105,7 @@ private:
     void beginPaint();
     void doPaint(bool mergeable);
     void updateBrush();
-    void updateBrushAt(FillRegion &fill, QPoint pos);
+    void updateBrushAt(WangFiller &filler, QPoint pos);
 
     // The point painting happens around
     // In tile mode, this is that tile
@@ -97,9 +121,11 @@ private:
     int mCurrentColor = 0;
     BrushMode mBrushMode = Idle;
     bool mIsTileMode = false;
+    bool mIsTileModeDefault = false;
     bool mRotationalSymmetry = false;
     bool mLineStartSet = false;
     BrushBehavior mBrushBehavior = Free;
+    QAction *mToggleFillFullTiles;
 };
 
 } // namespace Tiled

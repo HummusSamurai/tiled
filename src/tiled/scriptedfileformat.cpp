@@ -28,6 +28,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QJSEngine>
+#include <QQmlEngine>
 #include <QJSValueIterator>
 #include <QTextStream>
 
@@ -64,7 +65,7 @@ bool ScriptedFileFormat::supportsFile(const QString &fileName) const
     QString extension = mObject.property(QStringLiteral("extension")).toString();
     extension.prepend(QLatin1Char('.'));
 
-    return fileName.endsWith(extension);
+    return fileName.endsWith(extension, Qt::CaseInsensitive);
 }
 
 QJSValue ScriptedFileFormat::read(const QString &fileName)
@@ -175,6 +176,7 @@ ScriptedMapFormat::~ScriptedMapFormat()
 QStringList ScriptedMapFormat::outputFiles(const Map *map, const QString &fileName) const
 {
     EditableMap editable(map);
+    QQmlEngine::setObjectOwnership(&editable, QQmlEngine::CppOwnership);
     return mFormat.outputFiles(&editable, fileName);
 }
 
@@ -204,6 +206,7 @@ std::unique_ptr<Map> ScriptedMapFormat::read(const QString &fileName)
 bool ScriptedMapFormat::write(const Map *map, const QString &fileName, Options options)
 {
     EditableMap editable(map);
+    QQmlEngine::setObjectOwnership(&editable, QQmlEngine::CppOwnership);
     return mFormat.write(&editable, fileName, options, mError);
 }
 
@@ -249,6 +252,7 @@ SharedTileset ScriptedTilesetFormat::read(const QString &fileName)
 bool ScriptedTilesetFormat::write(const Tileset &tileset, const QString &fileName, FileFormat::Options options)
 {
     EditableTileset editable(&tileset);
+    QQmlEngine::setObjectOwnership(&editable, QQmlEngine::CppOwnership);
     return mFormat.write(&editable, fileName, options, mError);
 }
 

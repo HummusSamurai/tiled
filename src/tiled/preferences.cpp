@@ -21,28 +21,51 @@
 
 #include "preferences.h"
 
-#include "documentmanager.h"
 #include "languagemanager.h"
-#include "mapdocument.h"
 #include "pluginmanager.h"
 #include "savefile.h"
 #include "session.h"
 #include "tilesetmanager.h"
 
+#include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QScopedValueRollback>
 #include <QStandardPaths>
 #include <QVariantMap>
 
 using namespace Tiled;
 
+constexpr auto snapModeKey = "Interface/SnapMode";
+constexpr auto snapToGridKey = "Interface/SnapToGrid";
+constexpr auto snapToFineGridKey = "Interface/SnapToFineGrid";
+constexpr auto snapToPixelsKey = "Interface/SnapToPixels";
+
+static SnapMode toSnapMode(int mode)
+{
+    switch (mode) {
+    case static_cast<int>(SnapMode::Grid):
+    case static_cast<int>(SnapMode::FineGrid):
+    case static_cast<int>(SnapMode::Pixels):
+        return static_cast<SnapMode>(mode);
+    default:
+        return SnapMode::None;
+    }
+}
+
 Preferences *Preferences::mInstance;
 QString Preferences::mStartupProject;
+QString Preferences::mStartupSession;
 
 Preferences *Preferences::instance()
 {
-    if (!mInstance)
-        mInstance = new Preferences;
+    if (!mInstance) {
+        const auto iniFile = QDir(QApplication::applicationDirPath()).filePath(QStringLiteral("tiled.ini"));
+        if (QFileInfo::exists(iniFile) && QFileInfo(iniFile).isFile())
+            mInstance = new Preferences(iniFile);
+        else
+            mInstance = new Preferences;
+    }
     return mInstance;
 }
 
@@ -53,14 +76,32 @@ void Preferences::deleteInstance()
 }
 
 Preferences::Preferences()
+    : QSettings()
+{
+    initialize();
+}
+
+/**
+ * Uses the given settings file in INI format. This constructor is used for
+ * portable installs.
+ */
+Preferences::Preferences(const QString &fileName)
+    : QSettings(fileName, QSettings::IniFormat)
+    , mPortable(true)
+{
+    initialize();
+}
+
+Preferences::~Preferences()
+{
+}
+
+void Preferences::initialize()
 {
     // Make sure the data directory exists
     const QDir dataDir { dataLocation() };
     if (!dataDir.exists())
         dataDir.mkpath(QStringLiteral("."));
-
-    connect(&mWatcher, &FileSystemWatcher::fileChanged,
-            this, &Preferences::objectTypesFileChangedOnDisk);
 
     SaveFile::setSafeSavingEnabled(safeSavingEnabled());
 
@@ -103,15 +144,48 @@ Preferences::Preferences()
         setValue(QLatin1String("Install/DonationDialogTime"), donationDialogTime.toString(Qt::ISODate));
     }
     setValue(QLatin1String("Install/RunCount"), runCount() + 1);
-}
 
-Preferences::~Preferences()
-{
+    const auto oldGridMajorKey = QStringLiteral("Interface/GridMajor");
+    if (contains(oldGridMajorKey)) {
+        const int gridMajor = value(oldGridMajorKey).toInt();
+        setGridMajor(QSize(gridMajor, gridMajor));
+        remove(oldGridMajorKey);
+    }
+
+    if (!contains(QLatin1String(snapModeKey))) {
+        SnapMode mode = SnapMode::None;
+
+        // Preserve legacy behavior when multiple old flags were enabled:
+        // grid snapping took priority over fine grid, and pixel snapping only
+        // applied when neither grid mode was active.
+        if (get<bool>(snapToGridKey, false))
+            mode = SnapMode::Grid;
+        else if (get<bool>(snapToFineGridKey, false))
+            mode = SnapMode::FineGrid;
+        else if (get<bool>(snapToPixelsKey, false))
+            mode = SnapMode::Pixels;
+
+        setValue(QLatin1String(snapModeKey), static_cast<int>(mode));
+    }
+
+    remove(QLatin1String(snapToGridKey));
+    remove(QLatin1String(snapToFineGridKey));
+    remove(QLatin1String(snapToPixelsKey));
 }
 
 bool Preferences::showGrid() const
 {
     return get("Interface/ShowGrid", true);
+}
+
+bool Preferences::showWorldGrid() const
+{
+    return get("Interface/ShowWorldGrid", true);
+}
+
+bool Preferences::snapToWorldGrid() const
+{
+    return get("Interface/SnapToWorldGrid", true);
 }
 
 bool Preferences::showTileObjectOutlines() const
@@ -139,19 +213,9 @@ bool Preferences::parallaxEnabled() const
     return get("Interface/ParallaxEnabled", true);
 }
 
-bool Preferences::snapToGrid() const
+SnapMode Preferences::snapMode() const
 {
-    return get("Interface/SnapToGrid", false);
-}
-
-bool Preferences::snapToFineGrid() const
-{
-    return get("Interface/SnapToFineGrid", false);
-}
-
-bool Preferences::snapToPixels() const
-{
-    return get("Interface/SnapToPixels", false);
+    return toSnapMode(get(snapModeKey, static_cast<int>(SnapMode::None)));
 }
 
 QColor Preferences::gridColor() const
@@ -159,9 +223,19 @@ QColor Preferences::gridColor() const
     return get<QColor>("Interface/GridColor", Qt::black);
 }
 
+QColor Preferences::backgroundFadeColor() const
+{
+    return get<QColor>("Interface/BackgroundFadeColor", Qt::black);
+}
+
 int Preferences::gridFine() const
 {
     return get<int>("Interface/GridFine", 4);
+}
+
+QSize Preferences::gridMajor() const
+{
+    return get<QSize>("Interface/GridMajorSize", QSize(10, 10));
 }
 
 qreal Preferences::objectLineWidth() const
@@ -243,6 +317,29 @@ void Preferences::setSelectionColor(const QColor &color)
     emit selectionColorChanged(color);
 }
 
+bool Preferences::useCustomFont() const
+{
+    return get<bool>("Interface/UseCustomFont", false);
+}
+
+void Preferences::setUseCustomFont(bool useCustomFont)
+{
+    setValue(QLatin1String("Interface/UseCustomFont"), useCustomFont);
+    emit applicationFontChanged();
+}
+
+QFont Preferences::customFont() const
+{
+    return get<QFont>("Interface/CustomFont", QGuiApplication::font());
+}
+
+void Preferences::setCustomFont(const QFont &font)
+{
+    setValue(QLatin1String("Interface/CustomFont"), font);
+    if (useCustomFont())
+        emit applicationFontChanged();
+}
+
 Map::LayerDataFormat Preferences::layerDataFormat() const
 {
     return static_cast<Map::LayerDataFormat>(get<int>("Storage/LayerDataFormat", Map::CSV));
@@ -252,6 +349,18 @@ void Preferences::setShowGrid(bool showGrid)
 {
     setValue(QLatin1String("Interface/ShowGrid"), showGrid);
     emit showGridChanged(showGrid);
+}
+
+void Preferences::setShowWorldGrid(bool showWorldGrid)
+{
+    setValue(QLatin1String("Interface/ShowWorldGrid"), showWorldGrid);
+    emit showWorldGridChanged(showWorldGrid);
+}
+
+void Preferences::setSnapToWorldGrid(bool snapToWorldGrid)
+{
+    setValue(QLatin1String("Interface/SnapToWorldGrid"), snapToWorldGrid);
+    emit snapToWorldGridChanged(snapToWorldGrid);
 }
 
 void Preferences::setShowTileObjectOutlines(bool enabled)
@@ -285,22 +394,13 @@ void Preferences::setParallaxEnabled(bool enabled)
     emit parallaxEnabledChanged(enabled);
 }
 
-void Preferences::setSnapToGrid(bool snapToGrid)
+void Preferences::setSnapMode(SnapMode snapMode)
 {
-    setValue(QLatin1String("Interface/SnapToGrid"), snapToGrid);
-    emit snapToGridChanged(snapToGrid);
-}
+    if (this->snapMode() == snapMode)
+        return;
 
-void Preferences::setSnapToFineGrid(bool snapToFineGrid)
-{
-    setValue(QLatin1String("Interface/SnapToFineGrid"), snapToFineGrid);
-    emit snapToFineGridChanged(snapToFineGrid);
-}
-
-void Preferences::setSnapToPixels(bool snapToPixels)
-{
-    setValue(QLatin1String("Interface/SnapToPixels"), snapToPixels);
-    emit snapToPixelsChanged(snapToPixels);
+    setValue(QLatin1String(snapModeKey), static_cast<int>(snapMode));
+    emit snapModeChanged(snapMode);
 }
 
 void Preferences::setGridColor(QColor gridColor)
@@ -309,10 +409,32 @@ void Preferences::setGridColor(QColor gridColor)
     emit gridColorChanged(gridColor);
 }
 
+void Preferences::setBackgroundFadeColor(QColor backgroundFadeColor)
+{
+    setValue(QLatin1String("Interface/BackgroundFadeColor"), backgroundFadeColor.name());
+    emit backgroundFadeColorChanged(backgroundFadeColor);
+}
+
 void Preferences::setGridFine(int gridFine)
 {
     setValue(QLatin1String("Interface/GridFine"), gridFine);
     emit gridFineChanged(gridFine);
+}
+
+void Preferences::setGridMajor(QSize gridMajor)
+{
+    setValue(QLatin1String("Interface/GridMajorSize"), gridMajor);
+    emit gridMajorChanged(gridMajor);
+}
+
+void Preferences::setGridMajorX(int gridMajorX)
+{
+    setGridMajor(QSize(gridMajorX, gridMajor().height()));
+}
+
+void Preferences::setGridMajorY(int gridMajorY)
+{
+    setGridMajor(QSize(gridMajor().width(), gridMajorY));
 }
 
 void Preferences::setObjectLineWidth(qreal lineWidth)
@@ -458,10 +580,10 @@ void Preferences::setUseOpenGL(bool useOpenGL)
     emit useOpenGLChanged(useOpenGL);
 }
 
-void Preferences::setObjectTypes(const ObjectTypes &objectTypes)
+void Preferences::setPropertyTypes(const SharedPropertyTypes &propertyTypes)
 {
-    Object::setObjectTypes(objectTypes);
-    emit objectTypesChanged();
+    Object::setPropertyTypes(propertyTypes);
+    emitPropertyTypesChanged();
 }
 
 QDate Preferences::firstRun() const
@@ -485,26 +607,26 @@ void Preferences::setPatron(bool isPatron)
     emit isPatronChanged();
 }
 
-bool Preferences::shouldShowDonationDialog() const
+bool Preferences::shouldShowDonationReminder() const
 {
     if (isPatron())
         return false;
     if (runCount() < 7)
         return false;
 
-    const QDate dialogTime = donationDialogTime();
+    const QDate dialogTime = donationReminderTime();
     if (!dialogTime.isValid())
         return false;
 
     return dialogTime.daysTo(QDate::currentDate()) >= 0;
 }
 
-QDate Preferences::donationDialogTime() const
+QDate Preferences::donationReminderTime() const
 {
     return get<QDate>("Install/DonationDialogTime");
 }
 
-void Preferences::setDonationDialogReminder(const QDate &date)
+void Preferences::setDonationReminder(const QDate &date)
 {
     if (date.isValid())
         setPatron(false);
@@ -549,13 +671,18 @@ void Preferences::addRecentProject(const QString &fileName)
 
 QString Preferences::startupSession() const
 {
+    if (!mStartupSession.isEmpty())
+        return mStartupSession;
     if (!startupProject().isEmpty())
         return Session::defaultFileNameForProject(startupProject());
     if (!restoreSessionOnStartup())
         return Session::defaultFileName();
 
     const auto session = get<QString>("Project/LastSession");
-    return session.isEmpty() ? Session::defaultFileName() : session;
+    if (session.isEmpty() || !QFileInfo::exists(session))
+        return Session::defaultFileName();
+
+    return session;
 }
 
 void Preferences::setLastSession(const QString &fileName)
@@ -573,6 +700,27 @@ void Preferences::setLastSession(const QString &fileName)
 bool Preferences::restoreSessionOnStartup() const
 {
     return get("Startup/RestorePreviousSession", true);
+}
+
+bool Preferences::naturalSorting() const
+{
+    return get("Project/NaturalSorting", true);
+}
+
+void Preferences::setNaturalSorting(bool enabled)
+{
+    setValue(QLatin1String("Project/NaturalSorting"), enabled);
+    emit naturalSortingChanged(enabled);
+}
+
+bool Preferences::repeatShortcutForPreviousTool() const
+{
+    return get("Interface/RepeatShortcutForPreviousTool", false);
+}
+
+void Preferences::setRepeatShortcutForPreviousTool(bool enabled)
+{
+    setValue(QLatin1String("Interface/RepeatShortcutForPreviousTool"), enabled);
 }
 
 void Preferences::addToRecentFileList(const QString &fileName, QStringList& files)
@@ -673,14 +821,29 @@ QString Preferences::homeLocation()
     return QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
 }
 
-QString Preferences::dataLocation()
+QString Preferences::dataLocation() const
 {
+    if (mPortable) {
+        const auto configDir = QFileInfo(fileName()).dir();
+        return configDir.filePath(QStringLiteral("data"));
+    }
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
-QString Preferences::configLocation()
+QString Preferences::configLocation() const
 {
+    if (mPortable)
+        return QFileInfo(fileName()).path();
+
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+}
+
+void Preferences::emitPropertyTypesChanged()
+{
+    Q_ASSERT(!mEmittingPropertyTypesChanged);
+
+    QScopedValueRollback<bool> emitting(mEmittingPropertyTypesChanged, true);
+    emit propertyTypesChanged();
 }
 
 QString Preferences::startupProject()
@@ -699,9 +862,12 @@ void Preferences::setStartupProject(const QString &filePath)
     mStartupProject = filePath;
 }
 
-QString Preferences::objectTypesFile() const
+/**
+ * Sets the session to load on startup.
+ */
+void Preferences::setStartupSession(const QString &filePath)
 {
-    return mObjectTypesFile;
+    mStartupSession = filePath;
 }
 
 void Preferences::setObjectTypesFile(const QString &fileName)
@@ -710,34 +876,8 @@ void Preferences::setObjectTypesFile(const QString &fileName)
     if (newObjectTypesFile.isEmpty())
         newObjectTypesFile = dataLocation() + QLatin1String("/objecttypes.xml");
 
-    if (mObjectTypesFile == newObjectTypesFile)
-        return;
-
-    if (!mObjectTypesFile.isEmpty())
-        mWatcher.removePath(mObjectTypesFile);
-
-    mObjectTypesFile = newObjectTypesFile;
-    mWatcher.addPath(newObjectTypesFile);
-
-    ObjectTypes objectTypes;
-    ObjectTypesSerializer().readObjectTypes(mObjectTypesFile, objectTypes);
-    setObjectTypes(objectTypes);
-}
-
-void Preferences::setObjectTypesFileLastSaved(const QDateTime &time)
-{
-    mObjectTypesFileLastSaved = time;
-}
-
-void Preferences::objectTypesFileChangedOnDisk()
-{
-    const QFileInfo fileInfo { objectTypesFile() };
-    if (fileInfo.lastModified() == mObjectTypesFileLastSaved)
-        return;
-
-    ObjectTypes objectTypes;
-    if (ObjectTypesSerializer().readObjectTypes(fileInfo.filePath(), objectTypes))
-        setObjectTypes(objectTypes);
+    if (mObjectTypesFile != newObjectTypesFile)
+        mObjectTypesFile = newObjectTypesFile;
 }
 
 #include "moc_preferences.cpp"

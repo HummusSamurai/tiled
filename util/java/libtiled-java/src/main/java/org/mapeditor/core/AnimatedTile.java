@@ -2,9 +2,9 @@
  * #%L
  * This file is part of libtiled-java.
  * %%
- * Copyright (C) 2004 - 2019 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2004 - 2019 Adam Turk <aturk@biggeruniverse.com>
- * Copyright (C) 2016 - 2019 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2004 - 2020 Adam Turk <aturk@biggeruniverse.com>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -30,16 +30,22 @@
  */
 package org.mapeditor.core;
 
+import java.awt.image.BufferedImage;
+import java.util.List;
+
 /**
  * Animated tiles take advantage of the Sprite class internally to handle
  * animation using an array of tiles.
  *
  * @see org.mapeditor.core.Sprite
- * @version 1.2.3
+ * @version 1.4.2
  */
 public class AnimatedTile extends Tile {
 
+    private static final int DEFAULT_FRAME_DURATION_MS = 100;
+
     private Sprite sprite;
+    private final long animationStartTimeMs = System.currentTimeMillis();
 
     /**
      * Constructor for AnimatedTile.
@@ -110,5 +116,55 @@ public class AnimatedTile extends Tile {
      */
     public Sprite getSprite() {
         return sprite;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public BufferedImage getImage() {
+        final Animation animation = getAnimation();
+        if (animation != null && animation.getFrame() != null && !animation.getFrame().isEmpty()) {
+            final TileSet tileSet = getTileSet();
+            if (tileSet == null) {
+                return super.getImage();
+            }
+
+            final List<Frame> frames = animation.getFrame();
+            int totalDuration = 0;
+            for (Frame frame : frames) {
+                int duration = frame.getDuration() != null ? frame.getDuration() : DEFAULT_FRAME_DURATION_MS;
+                if (duration > 0) {
+                    totalDuration += duration;
+                }
+            }
+            if (totalDuration <= 0) {
+                return super.getImage();
+            }
+
+            long elapsed = (System.currentTimeMillis() - animationStartTimeMs) % totalDuration;
+            if (elapsed < 0) {
+                // The system clock may move backwards.
+                elapsed += totalDuration;
+            }
+            long time = 0;
+            for (Frame frame : frames) {
+                int duration = frame.getDuration() != null ? frame.getDuration() : DEFAULT_FRAME_DURATION_MS;
+                if (duration <= 0) {
+                    duration = DEFAULT_FRAME_DURATION_MS;
+                }
+                time += duration;
+                if (elapsed < time) {
+                    Tile frameTile = tileSet.getTile(frame.getTileid());
+                    if (frameTile != null && frameTile != this) {
+                        return frameTile.getImage();
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (sprite != null && sprite.getCurrentKey() != null) {
+            return sprite.getCurrentFrame().getImage();
+        }
+        return super.getImage();
     }
 }

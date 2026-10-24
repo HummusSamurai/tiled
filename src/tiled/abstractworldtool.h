@@ -22,13 +22,38 @@
 
 #include "abstracttool.h"
 
+#include <QPointer>
+
+#include <array>
+#include <memory>
+
 class QAction;
+class QGraphicsItem;
+class QMenu;
 
 namespace Tiled {
 
-struct World;
+class World;
 
 class SelectionRectangle;
+class WorldDocument;
+
+// The eight resize handles, in the order they are placed by
+// AbstractWorldTool::setSelectionScreenRect.
+enum ResizeHandlePosition {
+    TopLeftHandle,
+    TopHandle,
+    TopRightHandle,
+    LeftHandle,
+    RightHandle,
+    BottomLeftHandle,
+    BottomHandle,
+    BottomRightHandle,
+    HandleCount,
+};
+
+// The resize cursor shape for a given resize handle.
+Qt::CursorShape cursorForHandle(int handle);
 
 /**
  * A convenient base class for tools that work on object layers. Implements
@@ -37,7 +62,6 @@ class SelectionRectangle;
 class AbstractWorldTool : public AbstractTool
 {
     Q_OBJECT
-    Q_INTERFACES(Tiled::AbstractTool)
 
 public:
     /**
@@ -69,34 +93,51 @@ protected:
      */
     void updateEnabledState() override;
 
+    void mapDocumentChanged(MapDocument *oldDocument,
+                            MapDocument *newDocument) override;
+
     MapDocument *mapAt(const QPointF &pos) const;
 
     void addAnotherMapToWorldAtCenter();
     void addAnotherMapToWorld(QPoint insertPos);
+    void createWorldForCurrentMap();
     void removeCurrentMapFromWorld();
-    void removeFromWorld(const QString &mapFileName);
-    void addToWorld(const World *world);
+    void removeFromWorld(WorldDocument *worldDocument, const QString &mapFileName);
+    void addToWorld(WorldDocument *worldDocument);
 
+    QSize worldGridSize(MapDocument *document) const;
+    QSize snapSize(MapDocument *document) const;
     QPoint snapPoint(QPoint point, MapDocument *document) const;
 
     void setTargetMap(MapDocument *mapDocument);
     MapDocument *targetMap() const { return mTargetMap; }
     void updateSelectionRectangle();
+    void setSelectionScreenRect(const QRect &rect);
+    int resizeHandleNear(const QPointF &scenePos, MapDocument *&mapDocument) const;
 
     bool mapCanBeMoved(MapDocument *mapDocument) const;
+    bool mapCanBeResized(MapDocument *mapDocument) const;
     QRect mapRect(MapDocument *mapDocument) const;
-    const World *constWorld(MapDocument *mapDocument) const;
+    WorldDocument *worldForMap(MapDocument *mapDocument) const;
 
     void showContextMenu(QGraphicsSceneMouseEvent *);
 
 private:
-    MapDocument *mTargetMap = nullptr;
+    void languageChangedImpl();
 
+    void populateAddToWorldMenu(QMenu &menu);
+
+    // A QPointer, since the target map may be a document other than the
+    // current one and can be closed while it is targeted
+    QPointer<MapDocument> mTargetMap;
+
+    QAction *mNewWorldForMapAction;
     QAction *mAddAnotherMapToWorldAction;
     QAction *mAddMapToWorldAction;
     QAction *mRemoveMapFromWorldAction;
 
     std::unique_ptr<SelectionRectangle> mSelectionRectangle;
+    std::array<std::unique_ptr<QGraphicsItem>, HandleCount> mResizeHandles;
 };
 
 } // namespace Tiled

@@ -26,6 +26,7 @@
 #include "commanddatamodel.h"
 #include "commandmanager.h"
 #include "commandsedit.h"
+#include "projectmanager.h"
 #include "utils.h"
 
 #include <QShortcut>
@@ -41,9 +42,6 @@ CommandDialog::CommandDialog(QWidget *parent)
 {
     mUi->setupUi(this);
     resize(Utils::dpiScaled(size()));
-#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
-    setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
-#endif
 
     auto *commandManager = CommandManager::instance();
 
@@ -52,6 +50,9 @@ CommandDialog::CommandDialog(QWidget *parent)
 
     mUi->tabWidget->addTab(mGlobalCommandsEdit, tr("Global Commands"));
     mUi->tabWidget->addTab(mProjectCommandsEdit, tr("Project Commands"));
+
+    const auto &project = ProjectManager::instance()->project();
+    mUi->tabWidget->setTabEnabled(1, !project.fileName().isEmpty());
 
     Utils::restoreGeometry(this);
 }
@@ -104,8 +105,6 @@ CommandDataModel *CommandTreeView::model() const
 void CommandTreeView::contextMenuEvent(QContextMenuEvent *event)
 {
     const QModelIndex index = indexAt(event->pos());
-
-    // Generate a run a menu for the index
     if (QMenu *menu = model()->contextMenu(this, index))
         menu->exec(event->globalPos());
 }

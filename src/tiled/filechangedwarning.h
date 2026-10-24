@@ -32,16 +32,19 @@ class FileChangedWarning : public QWidget
     Q_OBJECT
 
 public:
-    FileChangedWarning(QWidget *parent = nullptr);
+    explicit FileChangedWarning(QWidget *parent = nullptr);
 
 signals:
     void reload();
     void ignore();
 
 protected:
+    void changeEvent(QEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
+    void retranslateUi();
+
     QLabel *mLabel;
     QDialogButtonBox *mButtons;
 };

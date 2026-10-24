@@ -23,7 +23,7 @@
 #include "actionmanager.h"
 #include "changeevents.h"
 #include "changetilewangid.h"
-#include "map.h"
+#include "pannableviewhelper.h"
 #include "preferences.h"
 #include "stylehelper.h"
 #include "tile.h"
@@ -53,8 +53,6 @@
 
 using namespace Tiled;
 
-namespace {
-
 static void setupTilesetGridTransform(const Tileset &tileset, QTransform &transform, QRect &targetRect)
 {
     if (tileset.orientation() == Tileset::Isometric) {
@@ -77,6 +75,8 @@ static void setupTilesetGridTransform(const Tileset &tileset, QTransform &transf
     }
 }
 
+namespace {
+
 /**
  * The delegate for drawing tile items in the tileset view.
  */
@@ -95,7 +95,8 @@ public:
                    const QModelIndex &index) const override;
 
 private:
-    void drawFilmStrip(QPainter *painter, QRect targetRect) const;
+    static void drawFilmStrip(QPainter *painter, QRect targetRect, bool wangEditingActive);
+
     void drawWangOverlay(QPainter *painter,
                          const Tile *tile,
                          QRect targetRect,
@@ -104,12 +105,14 @@ private:
     TilesetView *mTilesetView;
 };
 
+} // anonymous namespace
+
 void TileDelegate::paint(QPainter *painter,
                          const QStyleOptionViewItem &option,
                          const QModelIndex &index) const
 {
-    const TilesetModel *model = static_cast<const TilesetModel*>(index.model());
-    const Tile *tile = model->tileAt(index);
+    auto model = static_cast<const TilesetModel*>(index.model());
+    auto tile = model->tileAt(index);
     if (!tile)
         return;
 
@@ -118,7 +121,7 @@ void TileDelegate::paint(QPainter *painter,
     const qreal zoom = mTilesetView->scale();
     const bool wrapping = mTilesetView->dynamicWrapping();
 
-    QSize tileSize = tileImage.size();
+    QSize tileSize = tile->size();
     if (tileImage.isNull()) {
         Tileset *tileset = model->tileset();
         if (tileset->isCollection()) {
@@ -153,14 +156,14 @@ void TileDelegate::paint(QPainter *painter,
             painter->setRenderHint(QPainter::SmoothPixmapTransform);
 
     if (!tileImage.isNull())
-        painter->drawPixmap(targetRect, tileImage);
+        painter->drawPixmap(targetRect, tileImage, tile->imageRect());
     else
         mTilesetView->imageMissingIcon().paint(painter, targetRect, Qt::AlignBottom | Qt::AlignLeft);
 
 
     // Overlay with film strip when animated
     if (mTilesetView->markAnimatedTiles() && tile->isAnimated())
-        drawFilmStrip(painter, targetRect);
+        drawFilmStrip(painter, targetRect, mTilesetView->isEditWangSet());
 
     const auto highlight = option.palette.highlight();
 
@@ -174,12 +177,27 @@ void TileDelegate::paint(QPainter *painter,
 
     if (mTilesetView->isEditWangSet())
         drawWangOverlay(painter, tile, targetRect, index);
+
+    // draw the focus rect
+    if (option.state & QStyle::State_HasFocus) {
+        auto style = option.widget->style();
+        QStyleOptionFocusRect o;
+        o.QStyleOption::operator=(option);
+        o.rect = style->subElementRect(QStyle::SE_ItemViewItemFocusRect, &option);
+        o.state |= QStyle::State_KeyboardFocusChange;
+        o.state |= QStyle::State_Item;
+        QPalette::ColorGroup cg = (option.state & QStyle::State_Enabled)
+                                      ? QPalette::Normal : QPalette::Disabled;
+        o.backgroundColor = option.palette.color(cg, (option.state & QStyle::State_Selected)
+                                                         ? QPalette::Highlight : QPalette::Window);
+        style->drawPrimitive(QStyle::PE_FrameFocusRect, &o, painter);
+    }
 }
 
 QSize TileDelegate::sizeHint(const QStyleOptionViewItem & /* option */,
                              const QModelIndex &index) const
 {
-    const TilesetModel *m = static_cast<const TilesetModel*>(index.model());
+    auto m = static_cast<const TilesetModel*>(index.model());
     const int extra = mTilesetView->drawGrid() ? 1 : 0;
     const qreal scale = mTilesetView->scale();
 
@@ -190,10 +208,9 @@ QSize TileDelegate::sizeHint(const QStyleOptionViewItem & /* option */,
                          tileset->tileHeight() * scale + extra);
         }
 
-        const QPixmap &image = tile->image();
-        QSize tileSize = image.size();
+        QSize tileSize = tile->size();
 
-        if (image.isNull()) {
+        if (tile->image().isNull()) {
             Tileset *tileset = m->tileset();
             if (tileset->isCollection()) {
                 tileSize = QSize(32, 32);
@@ -211,7 +228,7 @@ QSize TileDelegate::sizeHint(const QStyleOptionViewItem & /* option */,
     return QSize(extra, extra);
 }
 
-void TileDelegate::drawFilmStrip(QPainter *painter, QRect targetRect) const
+void TileDelegate::drawFilmStrip(QPainter *painter, QRect targetRect, bool wangEditingActive)
 {
     painter->save();
 
@@ -224,7 +241,7 @@ void TileDelegate::drawFilmStrip(QPainter *painter, QRect targetRect) const
     painter->scale(scale, scale);
     painter->translate(-18, 3);
     painter->rotate(-45);
-    painter->setOpacity(0.8);
+    painter->setOpacity(wangEditingActive ? 0.3 : 0.8);
 
     QRectF strip(0, 0, 32, 6);
     painter->fillRect(strip, Qt::black);
@@ -260,7 +277,8 @@ void TileDelegate::drawWangOverlay(QPainter *painter,
     setupTilesetGridTransform(*tile->tileset(), transform, targetRect);
     painter->setTransform(transform, true);
 
-    paintWangOverlay(painter, wangSet->wangIdOfTile(tile),
+    paintWangOverlay(painter,
+                     wangSet->wangIdOfTile(tile) & wangSet->typeMask(),
                      *wangSet,
                      targetRect);
 
@@ -277,8 +295,6 @@ void TileDelegate::drawWangOverlay(QPainter *painter,
     painter->restore();
 }
 
-} // anonymous namespace
-
 TilesetView::TilesetView(QWidget *parent)
     : QTableView(parent)
     , mZoomable(new Zoomable(this))
@@ -289,6 +305,8 @@ TilesetView::TilesetView(QWidget *parent)
     setItemDelegate(new TileDelegate(this, this));
     setShowGrid(false);
     setTabKeyNavigation(false);
+    setDropIndicatorShown(true);
+    setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     QHeaderView *hHeader = horizontalHeader();
     QHeaderView *vHeader = verticalHeader();
@@ -298,6 +316,15 @@ TilesetView::TilesetView(QWidget *parent)
     vHeader->setSectionResizeMode(QHeaderView::ResizeToContents);
     hHeader->setMinimumSectionSize(1);
     vHeader->setMinimumSectionSize(1);
+#if QT_VERSION == QT_VERSION_CHECK(6, 9, 0)
+    // For Qt 6.9.0 we force header mode to "FlexibleWithSectionMemoryUsage",
+    // to avoid what appears to be a bug in that implementation regarding
+    // resizing of sections (https://github.com/mapeditor/tiled/issues/4191).
+    hHeader->setStretchLastSection(true);
+    vHeader->setStretchLastSection(true);
+    hHeader->setStretchLastSection(false);
+    vHeader->setStretchLastSection(false);
+#endif
 
     // Hardcode this view on 'left to right' since it doesn't work properly
     // for 'right to left' languages.
@@ -315,6 +342,14 @@ TilesetView::TilesetView(QWidget *parent)
             this, &TilesetView::updateBackgroundColor);
 
     connect(mZoomable, &Zoomable::scaleChanged, this, &TilesetView::adjustScale);
+
+    connect(new PannableViewHelper(this), &PannableViewHelper::cursorChanged,
+            this, [this] (std::optional<Qt::CursorShape> cursor) {
+        if (cursor)
+            viewport()->setCursor(*cursor);
+        else
+            viewport()->unsetCursor();
+    });
 }
 
 void TilesetView::setTilesetDocument(TilesetDocument *tilesetDocument)
@@ -324,8 +359,11 @@ void TilesetView::setTilesetDocument(TilesetDocument *tilesetDocument)
 
     mTilesetDocument = tilesetDocument;
 
-    if (mTilesetDocument)
+    if (mTilesetDocument) {
         connect(mTilesetDocument, &Document::changed, this, &TilesetView::onChange);
+        connect(mTilesetDocument, &TilesetDocument::tilesAdded, this, &TilesetView::refreshColumnCount);
+        connect(mTilesetDocument, &TilesetDocument::tilesRemoved, this, &TilesetView::refreshColumnCount);
+    }
 }
 
 QSize TilesetView::sizeHint() const
@@ -421,7 +459,7 @@ void TilesetView::setMarkAnimatedTiles(bool enabled)
 bool TilesetView::event(QEvent *event)
 {
     if (event->type() == QEvent::Gesture) {
-        QGestureEvent *gestureEvent = static_cast<QGestureEvent *>(event);
+        auto gestureEvent = static_cast<QGestureEvent *>(event);
         if (QGesture *gesture = gestureEvent->gesture(Qt::PinchGesture))
             mZoomable->handlePinchGesture(static_cast<QPinchGesture *>(gesture));
     } else if (event->type() == QEvent::ShortcutOverride) {
@@ -475,7 +513,29 @@ void TilesetView::keyPressEvent(QKeyEvent *event)
         }
     }
 
-    return QTableView::keyPressEvent(event);
+    // Ignore space, because we'd like to use it for panning
+    if (event->key() == Qt::Key_Space) {
+        event->ignore();
+        return;
+    }
+
+    QTableView::keyPressEvent(event);
+}
+
+void TilesetView::setRelocateTiles(bool enabled)
+{
+    if (mRelocateTiles == enabled)
+        return;
+
+    mRelocateTiles = enabled;
+
+    if (enabled)
+        setDragDropMode(QTableView::InternalMove);
+    else
+        setDragDropMode(QTableView::NoDragDrop);
+
+    setMouseTracking(true);
+    viewport()->update();
 }
 
 void TilesetView::setEditWangSet(bool enabled)
@@ -528,12 +588,6 @@ QIcon TilesetView::imageMissingIcon() const
 
 void TilesetView::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MiddleButton && isActiveWindow()) {
-        mLastMousePos = event->globalPos();
-        setHandScrolling(true);
-        return;
-    }
-
     if (mEditWangSet) {
         if (event->button() == Qt::LeftButton)
             applyWangId();
@@ -546,39 +600,29 @@ void TilesetView::mousePressEvent(QMouseEvent *event)
 
 void TilesetView::mouseMoveEvent(QMouseEvent *event)
 {
-    if (mHandScrolling) {
-        auto *hBar = horizontalScrollBar();
-        auto *vBar = verticalScrollBar();
-        const QPoint d = event->globalPos() - mLastMousePos;
-
-        int horizontalValue = hBar->value() + (isRightToLeft() ? d.x() : -d.x());
-        int verticalValue = vBar->value() - d.y();
-
-        hBar->setValue(horizontalValue);
-        vBar->setValue(verticalValue);
-
-        mLastMousePos = event->globalPos();
+    if (!mEditWangSet) {
+        QTableView::mouseMoveEvent(event);
         return;
     }
 
-    if (mEditWangSet) {
-        if (!mWangSet)
-            return;
+    if (!mWangSet)
+        return;
 
-        const QPoint pos = event->pos();
-        const QModelIndex hoveredIndex = indexAt(pos);
-        const QModelIndex previousHoveredIndex = mHoveredIndex;
-        mHoveredIndex = hoveredIndex;
+    const QPoint pos = event->pos();
+    const QModelIndex hoveredIndex = indexAt(pos);
+    const QModelIndex previousHoveredIndex = mHoveredIndex;
+    mHoveredIndex = hoveredIndex;
 
-        WangId wangId;
+    WangId wangId;
 
-        if (mWangBehavior == AssignWholeId) {
-            wangId = mWangId;
-        } else {
-            QRect tileRect = visualRect(mHoveredIndex);
-            QTransform transform;
-            setupTilesetGridTransform(*tilesetDocument()->tileset(), transform, tileRect);
+    if (mWangBehavior == AssignWholeId) {
+        wangId = mWangId;
+    } else {
+        QRect tileRect = visualRect(mHoveredIndex);
+        QTransform transform;
+        setupTilesetGridTransform(*tilesetDocument()->tileset(), transform, tileRect);
 
+        if (!tileRect.isEmpty()) {
             const auto mappedPos = transform.inverted().map(pos);
             QPoint tileLocalPos = mappedPos - tileRect.topLeft();
             QPointF tileLocalPosF((qreal) tileLocalPos.x() / tileRect.width(),
@@ -626,32 +670,23 @@ void TilesetView::mouseMoveEvent(QMouseEvent *event)
                                                             : WangId::INDEX_MASK);
             }
         }
-
-        if (previousHoveredIndex != mHoveredIndex || wangId != mWangId) {
-            mWangId = wangId;
-
-            if (previousHoveredIndex.isValid())
-                update(previousHoveredIndex);
-            if (mHoveredIndex.isValid())
-                update(mHoveredIndex);
-        }
-
-        if (event->buttons() & Qt::LeftButton)
-            applyWangId();
-
-        return;
     }
 
-    QTableView::mouseMoveEvent(event);
+    if (previousHoveredIndex != mHoveredIndex || wangId != mWangId) {
+        mWangId = wangId;
+
+        if (previousHoveredIndex.isValid())
+            update(previousHoveredIndex);
+        if (mHoveredIndex.isValid())
+            update(mHoveredIndex);
+    }
+
+    if (event->buttons() & Qt::LeftButton)
+        applyWangId();
 }
 
 void TilesetView::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MiddleButton) {
-        setHandScrolling(false);
-        return;
-    }
-
     if (mEditWangSet) {
         if (event->button() == Qt::LeftButton)
             finishWangIdChange();
@@ -660,7 +695,6 @@ void TilesetView::mouseReleaseEvent(QMouseEvent *event)
     }
 
     QTableView::mouseReleaseEvent(event);
-    return;
 }
 
 void TilesetView::leaveEvent(QEvent *event)
@@ -688,11 +722,7 @@ void TilesetView::wheelEvent(QWheelEvent *event)
 
     if ((wheelZoomsByDefault != control) && event->angleDelta().y()) {
 
-#if QT_VERSION < QT_VERSION_CHECK(5,14,0)
-        const QPointF &viewportPos = event->posF();
-#else
         const QPointF &viewportPos = event->position();
-#endif
         const QPointF contentPos(viewportPos.x() + hor->value(),
                                  viewportPos.y() + ver->value());
 
@@ -741,8 +771,6 @@ void TilesetView::contextMenuEvent(QContextMenuEvent *event)
 
     QMenu menu;
 
-    QIcon propIcon(QLatin1String(":images/16/document-properties.png"));
-
     if (tile) {
         if (mEditWangSet) {
             selectionModel()->setCurrentIndex(index,
@@ -757,7 +785,24 @@ void TilesetView::contextMenuEvent(QContextMenuEvent *event)
                 QAction *setImage = menu.addAction(tr("Use as Terrain Image"));
                 connect(setImage, &QAction::triggered, this, &TilesetView::selectWangColorImage);
             }
-        } else if (mTilesetDocument) {
+            menu.addSeparator();
+        }
+
+        QUrl imageSource = tile->imageSource();
+        if (imageSource.isEmpty())
+            imageSource = tile->tileset()->imageSource();
+
+        if (!imageSource.isEmpty()) {
+            const QString localFile = imageSource.toLocalFile();
+            if (!localFile.isEmpty()) {
+                Utils::addOpenContainingFolderAction(menu, localFile);
+                Utils::addOpenWithSystemEditorAction(menu, localFile);
+                menu.addSeparator();
+            }
+        }
+
+        if (mTilesetDocument) {
+            const QIcon propIcon(QStringLiteral(":images/16/document-properties.png"));
             QAction *tileProperties = menu.addAction(propIcon,
                                                      tr("Tile &Properties..."));
             Utils::setThemeIcon(tileProperties, "document-properties");
@@ -766,7 +811,7 @@ void TilesetView::contextMenuEvent(QContextMenuEvent *event)
             // Assuming we're used in the MapEditor
 
             // Enable "swap" if there are exactly 2 tiles selected
-            bool exactlyTwoTilesSelected =
+            const bool exactlyTwoTilesSelected =
                     (selectionModel()->selectedIndexes().size() == 2);
 
             QAction *swapTilesAction = menu.addAction(tr("&Swap Tiles"));
@@ -785,6 +830,9 @@ void TilesetView::contextMenuEvent(QContextMenuEvent *event)
     connect(toggleGrid, &QAction::toggled,
             prefs, &Preferences::setShowTilesetGrid);
 
+    QAction *selectAllTiles = menu.addAction(tr("Select &All Tiles"));
+    connect(selectAllTiles, &QAction::triggered, this, &QAbstractItemView::selectAll);
+
     ActionManager::applyMenuExtensions(&menu, MenuIds::tilesetViewTiles);
 
     menu.exec(event->globalPos());
@@ -799,10 +847,13 @@ void TilesetView::resizeEvent(QResizeEvent *event)
 void TilesetView::onChange(const ChangeEvent &change)
 {
     switch (change.type) {
+    case ChangeEvent::DocumentReloaded:
+        refreshColumnCount();
+        break;
     case ChangeEvent::WangSetChanged: {
         auto &wangSetChange = static_cast<const WangSetChangeEvent&>(change);
         if (mEditWangSet && wangSetChange.wangSet == mWangSet &&
-                (wangSetChange.properties & WangSetChangeEvent::TypeProperty)) {
+                (wangSetChange.property == WangSetChangeEvent::TypeProperty)) {
             viewport()->update();
         }
         break;
@@ -933,19 +984,6 @@ Tile *TilesetView::currentTile() const
 {
     const TilesetModel *model = tilesetModel();
     return model ? model->tileAt(currentIndex()) : nullptr;
-}
-
-void TilesetView::setHandScrolling(bool handScrolling)
-{
-    if (mHandScrolling == handScrolling)
-        return;
-
-    mHandScrolling = handScrolling;
-
-    if (mHandScrolling)
-        setCursor(QCursor(Qt::ClosedHandCursor));
-    else
-        unsetCursor();
 }
 
 void TilesetView::updateBackgroundColor()

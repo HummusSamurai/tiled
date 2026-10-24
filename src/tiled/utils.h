@@ -23,15 +23,15 @@
 #include "rangeset.h"
 
 #include <QIcon>
+#include <QJsonParseError>
 #include <QSettings>
 #include <QString>
 
 #include <memory>
 
-#include "qtcompat_p.h"
-
 class QAction;
 class QKeyEvent;
+class QLayout;
 class QMenu;
 
 namespace Tiled {
@@ -45,8 +45,10 @@ bool fileNameMatchesNameFilter(const QString &fileName,
                                const QString &nameFilter);
 QString firstExtension(const QString &nameFilter);
 
-int matchingScore(const QStringList &words, QStringRef string);
-RangeSet<int> matchingRanges(const QStringList &words, QStringRef string);
+int matchingScore(const QStringList &words, QStringView string);
+RangeSet<int> matchingRanges(const QStringList &words, QStringView string);
+
+QIcon themeIcon(const QString &name);
 
 /**
  * Looks up the icon with the specified \a name from the system theme and set
@@ -61,9 +63,9 @@ template <class T>
 void setThemeIcon(T *t, const QString &name)
 {
 #ifdef Q_OS_LINUX
-    QIcon themeIcon = QIcon::fromTheme(name);
-    if (!themeIcon.isNull())
-        t->setIcon(themeIcon);
+    const QIcon icon = themeIcon(name);
+    if (!icon.isNull())
+        t->setIcon(icon);
 #else
     Q_UNUSED(t)
     Q_UNUSED(name)
@@ -75,6 +77,11 @@ void setThemeIcon(T *t, const char *name)
 {
     setThemeIcon(t, QLatin1String(name));
 }
+
+QIcon colorIcon(const QColor &color, QSize size);
+
+QRect screenRect(const QWidget *widget);
+QRect popupGeometry(const QWidget *parent, QSize popupSize);
 
 void restoreGeometry(QWidget *widget);
 void saveGeometry(QWidget *widget);
@@ -98,6 +105,12 @@ void addOpenWithSystemEditorAction(QMenu &menu, const QString &fileName);
 
 QSettings::Format jsonSettingsFormat();
 std::unique_ptr<QSettings> jsonSettings(const QString &fileName);
+
+namespace Error {
+QString jsonParseError(QJsonParseError error);
+} // namespace Error
+
+void deleteAllFromLayout(QLayout *layout);
 
 } // namespace Utils
 } // namespace Tiled

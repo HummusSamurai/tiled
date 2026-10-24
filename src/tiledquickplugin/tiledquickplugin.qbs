@@ -1,19 +1,21 @@
-import qbs 1.0
+import qbs.Utilities
 
 DynamicLibrary {
     targetName: "tiledquickplugin"
     builtByDefault: false
+    condition: Utilities.versionCompare(Qt.core.version, "6.5") >= 0
 
     Depends { name: "libtiled" }
     Depends { name: "libtiledquick" }
     Depends {
         name: "Qt"; submodules: ["qml", "quick"]
-        versionAtLeast: "5.6"
+        versionAtLeast: "6.5"
     }
 
-    cpp.cxxLanguageVersion: "c++14"
+    cpp.cxxLanguageVersion: "c++17"
     cpp.defines: [
-        "QT_DISABLE_DEPRECATED_BEFORE=QT_VERSION_CHECK(5,15,0)",
+        "QT_DISABLE_DEPRECATED_BEFORE=0x060500",
+        "QT_NO_DEPRECATED_WARNINGS",
         "QT_NO_CAST_FROM_ASCII",
         "QT_NO_CAST_TO_ASCII",
         "QT_NO_FOREACH",
@@ -30,17 +32,18 @@ DynamicLibrary {
         "tiledquickplugin.h"
     ]
 
-    property string installBase: qbs.targetOS.contains("darwin") ? "Tiled Quick.app/Contents/" : ""
+    install: true
+    installDir: {
+        var installBase = qbs.targetOS.contains("darwin") ? "Tiled Quick.app/Contents/" : "";
+        return installBase + "qml/org/mapeditor/Tiled";
+    }
 
     Group {
         name: "qmldir"
         files: "qmldir"
         fileTags: "qmldir"
-    }
 
-    Group {
         qbs.install: true
-        qbs.installDir: installBase + "qml/org/mapeditor/Tiled"
-        fileTagsFilter: ["dynamiclibrary", "qmldir"]
+        qbs.installDir: installDir
     }
 }

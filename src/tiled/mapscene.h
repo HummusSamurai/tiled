@@ -64,6 +64,8 @@ public:
 
     void setShowTileCollisionShapes(bool enabled);
     void setParallaxEnabled(bool enabled);
+    void setPainterScale(qreal painterScale);
+    void setSuppressMouseMoveEvents(bool suppress);
 
     QRectF mapBoundingRect() const;
 
@@ -76,7 +78,10 @@ public:
     const QRectF &viewRect() const;
     void setViewRect(const QRectF &rect);
 
+    void setOverrideBackgroundColor(QColor backgroundColor);
+
     QPointF absolutePositionForLayer(const Layer &layer) const;
+    QPointF layerItemPosition(const Layer &layer) const;
     QPointF parallaxOffset(const Layer &layer) const;
 
     static SessionOption<bool> enableWorlds;
@@ -86,6 +91,7 @@ signals:
 
     void sceneRefreshed();
 
+    void fontChanged();
     void parallaxParametersChanged();
 
 protected:
@@ -102,15 +108,20 @@ protected:
     void dragLeaveEvent(QGraphicsSceneDragDropEvent *event) override;
     void dragMoveEvent(QGraphicsSceneDragDropEvent *event) override;
 
+    void drawBackground(QPainter *painter, const QRectF &rect) override;
+
 private:
     void refreshScene();
 
-    void mapChanged();
+    void changeEvent(const ChangeEvent &change);
+    void mapResized(QPointF screenOffset);
+    void translateViews(const QPointF &delta);
     void repaintTileset(Tileset *tileset);
 
     void tilesetReplaced(int index, Tileset *tileset, Tileset *oldTileset);
 
     void updateDefaultBackgroundColor();
+    void updateBackgroundColor();
     void updateSceneRect();
 
     void setWorldsEnabled(bool enabled);
@@ -120,19 +131,27 @@ private:
 
     bool eventFilter(QObject *object, QEvent *event) override;
 
+    bool toolMouseMoved(const QPointF &pos, Qt::KeyboardModifiers modifiers);
+
     MapDocument *mMapDocument = nullptr;
     QHash<MapDocument*, MapItem*> mMapItems;
+    QString mLastWorldPositionMapFile;
+    QPoint mLastWorldPosition;
     AbstractTool *mSelectedTool = nullptr;
     DebugDrawItem *mDebugDrawItem = nullptr;
     bool mUnderMouse = false;
     bool mShowTileCollisionShapes = false;
     bool mParallaxEnabled = true;
     bool mWorldsEnabled = true;
+    bool mSuppressMouseMoveEvents = false;
+    bool mMouseMoveEventSuppressed = false;
     Session::CallbackIterator mEnableWorldsCallback;
-    Qt::KeyboardModifiers mCurrentModifiers = Qt::NoModifier;
+    Qt::KeyboardModifiers mToolModifiers = Qt::NoModifier;
+    Qt::KeyboardModifiers mLastModifiers = Qt::NoModifier;
     QPointF mLastMousePos;
     QRectF mViewRect;
     QColor mDefaultBackgroundColor;
+    QColor mOverrideBackgroundColor;
 };
 
 /**
@@ -148,7 +167,7 @@ inline MapDocument *MapScene::mapDocument() const
  */
 inline MapItem *MapScene::mapItem(MapDocument *mapDocument) const
 {
-    return mMapItems.value(mapDocument);
+    return mapDocument ? mMapItems.value(mapDocument) : nullptr;
 }
 
 inline DebugDrawItem *MapScene::debugDrawItem() const

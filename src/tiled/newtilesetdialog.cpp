@@ -67,9 +67,6 @@ NewTilesetDialog::NewTilesetDialog(QWidget *parent) :
     mNameWasEdited(false)
 {
     mUi->setupUi(this);
-#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
-    setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
-#endif
 
     const QSize tileSize = session::tileSize;
 
@@ -89,7 +86,7 @@ NewTilesetDialog::NewTilesetDialog(QWidget *parent) :
     connect(mUi->image, &QLineEdit::textChanged, this, &NewTilesetDialog::updateOkButton);
     connect(mUi->image, &QLineEdit::textChanged, this, &NewTilesetDialog::updateColorPickerButton);
     connect(mUi->useTransparentColor, &QCheckBox::toggled, this, &NewTilesetDialog::updateColorPickerButton);
-    connect(mUi->tilesetType, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+    connect(mUi->tilesetType, &QComboBox::currentIndexChanged,
             this, &NewTilesetDialog::tilesetTypeChanged);
     connect(mUi->dropperButton, &QAbstractButton::clicked, this, &NewTilesetDialog::pickColorFromImage);
 

@@ -38,6 +38,8 @@ public:
 
     CommandDataModel(QObject *parent = nullptr);
 
+    void languageChanged();
+
     void setCommands(const QVector<Command> &commands);
     const QVector<Command> &commands() const;
 
@@ -73,6 +75,7 @@ public:
     void setShowOutput(const QModelIndex &index, bool value);
     void setSaveBeforeExecute(const QModelIndex &index, bool value);
 
+    bool isCommand(const QModelIndex &index) const;
     Command command(const QModelIndex &index) const;
 
 public slots:

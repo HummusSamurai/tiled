@@ -3,14 +3,13 @@
   shipped when Tiled is distributed.
 */
 
-import qbs
 import qbs.File
 import qbs.FileInfo
 
 Product {
     name: "distribute"
     type: "installable"
-    builtByDefault: false
+    builtByDefault: (project.snapshot || project.release) && qbs.targetOS.contains("windows")
 
     Depends { name: "cpp" }
     Depends { name: "Qt.core" }
@@ -44,12 +43,7 @@ Product {
                 return Qt.core.libPath + "/lib"
             }
         }
-        property string postfix: {
-            var suffix = "";
-            if (qbs.targetOS.contains("windows") && qbs.debugInformation && Qt.core.versionMajor < 6 && Qt.core.versionMinor < 15)
-                suffix += "d";
-            return suffix + cpp.dynamicLibrarySuffix;
-        }
+        property string postfix: cpp.dynamicLibrarySuffix
         files: {
             function addQtVersions(libs) {
                 var result = [];
@@ -72,24 +66,19 @@ Product {
             if (!Qt.core.frameworkBuild) {
                 var major = Qt.core.versionMajor;
                 list.push(
+                    "Qt" + major + "Concurrent" + postfix,
                     "Qt" + major + "Core" + postfix,
                     "Qt" + major + "Gui" + postfix,
                     "Qt" + major + "Network" + postfix,
+                    "Qt" + major + "OpenGL" + postfix,
+                    "Qt" + major + "OpenGLWidgets" + postfix,
                     "Qt" + major + "Qml" + postfix,
                     "Qt" + major + "Svg" + postfix,
                     "Qt" + major + "Widgets" + postfix
                 );
             }
 
-            if (qbs.targetOS.contains("windows")) {
-                if (Qt.core.versionMajor < 6 && Qt.core.versionMinor < 7 &&
-                        !(Qt.core.versionMinor == 6 &&
-                          Qt.core.versionPatch >= 3)) {
-                    list.push("icuin54.dll",
-                              "icuuc54.dll",
-                              "icudt54.dll");
-                }
-            } else if (qbs.targetOS.contains("linux")) {
+            if (qbs.targetOS.contains("linux")) {
                 list = addQtVersions(list);
                 list = list.concat(addQtVersions([
                     "Qt" + major + "DBus.so",
@@ -106,12 +95,12 @@ Product {
             return list;
         }
         qbs.install: true
-        qbs.installDir: qbs.targetOS.contains("windows") ? "" : "lib"
+        qbs.installDir: qbs.targetOS.contains("windows") ? "" : project.libDir
     }
 
     property var pluginFiles: {
         if (qbs.targetOS.contains("windows")) {
-            if (qbs.debugInformation)
+            if (qbs.debugInformation && qbs.toolchain.contains("msvc"))
                 return ["*d.dll"];
             else
                 return ["*.dll"];
@@ -123,7 +112,7 @@ Product {
 
     property var pluginExcludeFiles: {
         var files = ["*.pdb"];
-        if (!(qbs.targetOS.contains("windows") && qbs.debugInformation)) {
+        if (!(qbs.toolchain.contains("msvc") && qbs.debugInformation)) {
             // Exclude debug DLLs.
             //
             // This also excludes the qdirect2d.dll platform plugin, but I'm
@@ -190,6 +179,26 @@ Product {
     }
 
     Group {
+        name: "Qt TLS Plugins"
+        prefix: FileInfo.joinPaths(Qt.core.pluginPath, "/tls/")
+        files: {
+            if (qbs.targetOS.contains("windows")) {
+                if (qbs.debugInformation && qbs.toolchain.contains("msvc"))
+                    return ["qschannelbackendd.dll"];
+                else
+                    return ["qschannelbackend.dll"];
+            } else if (qbs.targetOS.contains("macos")) {
+                return ["libqsecuretransportbackend.dylib"];
+            }
+
+            return pluginFiles;
+        }
+        excludeFiles: pluginExcludeFiles
+        qbs.install: true
+        qbs.installDir: "plugins/tls"
+    }
+
+    Group {
         name: "Qt XCB GL Integration Plugins"
         condition: qbs.targetOS.contains("linux")
         prefix: FileInfo.joinPaths(Qt.core.pluginPath, "/xcbglintegrations/")
@@ -238,7 +247,10 @@ Product {
                              "pt",
                              "pt_PT",
                              "ru",
+                             "sv",
+                             "th",
                              "tr",
+                             "uk",
                              "zh_CN",
                              "zh_TW"];
 
@@ -286,44 +298,6 @@ Product {
                           "MSVCR120.DLL")
             }
             return list
-        }
-        qbs.install: true
-        qbs.installDir: ""
-    }
-
-    Group {
-        name: "OpenSSL DLLs"
-        condition: qbs.targetOS.contains("windows") && File.exists(prefix)
-
-        prefix: {
-            if (project.openSslPath) {
-                return project.openSslPath + "/";
-            } else {
-                // Not sure what this check should be exactly, but Qt 5.6.3 was
-                // built against OpenSSL 1.0.2 whereas Qt 5.12.5 was built against
-                // OpenSSL 1.1.1.
-                if (Qt.core.versionMinor >= 12) {
-                    if (qbs.architecture === "x86_64")
-                        return "C:/OpenSSL-v111-Win64/"
-                    else
-                        return "C:/OpenSSL-v111-Win32/"
-                } else {
-                    if (qbs.architecture === "x86_64")
-                        return "C:/OpenSSL-Win64/"
-                    else
-                        return "C:/OpenSSL-Win32/"
-                }
-            }
-        }
-        files: {
-            if (Qt.core.versionMinor >= 12) {
-                if (qbs.architecture === "x86_64")
-                    return [ "libcrypto-1_1-x64.dll", "libssl-1_1-x64.dll" ]
-                else
-                    return [ "libcrypto-1_1.dll", "libssl-1_1.dll" ]
-            } else {
-                return [ "libeay32.dll", "ssleay32.dll" ]
-            }
         }
         qbs.install: true
         qbs.installDir: ""

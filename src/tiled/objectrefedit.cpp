@@ -23,9 +23,9 @@
 
 #include "mapdocument.h"
 #include "mapobject.h"
-#include "objectrefdialog.h"
 #include "utils.h"
 
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -51,7 +51,6 @@ ObjectRefEdit::ObjectRefEdit(QWidget *parent)
     mObjectDialogButton->setEnabled(false);
     mObjectDialogButton->setIconSize(Utils::smallIconSize());
     mObjectDialogButton->setIcon(QIcon(QStringLiteral("://images/scalable/search-object-dialog.svg")));
-    mObjectDialogButton->setToolTip(tr("Search Object"));
 
     mPickObjectButton->setText(QStringLiteral("Pick"));
     mPickObjectButton->setAutoRaise(true);
@@ -60,7 +59,6 @@ ObjectRefEdit::ObjectRefEdit(QWidget *parent)
     mPickObjectButton->setFocusPolicy(Qt::StrongFocus);
     mPickObjectButton->setIconSize(Utils::smallIconSize());
     mPickObjectButton->setIcon(QIcon(QStringLiteral("://images/scalable/select-object.svg")));
-    mPickObjectButton->setToolTip(tr("Select Object on Map"));
 
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -73,6 +71,8 @@ ObjectRefEdit::ObjectRefEdit(QWidget *parent)
     connect(mObjectDialogButton, &QToolButton::clicked, this, &ObjectRefEdit::openObjectRefDialog);
     connect(mPickObjectButton, &QToolButton::toggled, this, &ObjectRefEdit::pickObjectOnMap);
     connect(mLineEdit, &QLineEdit::editingFinished, this, &ObjectRefEdit::onEditFinished);
+
+    retranslateUi();
 }
 
 ObjectRefEdit::~ObjectRefEdit()
@@ -113,6 +113,20 @@ void ObjectRefEdit::keyPressEvent(QKeyEvent *event)
     QWidget::keyPressEvent(event);
 }
 
+void ObjectRefEdit::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+
+    if (event->type() == QEvent::LanguageChange)
+        retranslateUi();
+}
+
+void ObjectRefEdit::retranslateUi()
+{
+    mObjectDialogButton->setToolTip(tr("Search Object"));
+    mPickObjectButton->setToolTip(tr("Select Object on Map"));
+}
+
 void ObjectRefEdit::openObjectRefDialog()
 {
     if (!mValue.mapDocument)
@@ -151,7 +165,7 @@ void ObjectRefEdit::onMapObjectPicked(MapObject *object)
 
 void ObjectRefEdit::onEditFinished()
 {
-    auto newValue = fromExportValue(mLineEdit->text(), objectRefTypeId()).value<ObjectRef>();
+    const auto newValue = ObjectRef::fromInt(mLineEdit->text().toInt());
     setValue(DisplayObjectRef { newValue, mValue.mapDocument });
 }
 

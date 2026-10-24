@@ -73,6 +73,8 @@ class BrokenLinksModel : public QAbstractListModel
 public:
     BrokenLinksModel(QObject *parent = nullptr);
 
+    void languageChanged();
+
     void setDocument(Document *document);
     Document *document() const;
 
@@ -90,6 +92,8 @@ signals:
     void hasBrokenLinksChanged(bool hasBrokenLinks);
 
 private:
+    void documentChanged(const ChangeEvent &event);
+
     void tileImageSourceChanged(Tile *tile);
     void tilesetChanged(Tileset *tileset);
 
@@ -132,7 +136,11 @@ public:
 signals:
     void ignore();
 
+protected:
+    void changeEvent(QEvent *event) override;
+
 private:
+    void retranslateUi();
     void clicked(QAbstractButton *button);
     void selectionChanged();
 

@@ -23,23 +23,23 @@
 
 #include "documentmanager.h"
 #include "editpolygontool.h"
-#include "mapdocumentactionhandler.h"
 #include "mapscene.h"
 #include "mapview.h"
 #include "objectgroup.h"
 #include "objectselectiontool.h"
+#include "objecttemplate.h"
 #include "propertiesdock.h"
 #include "replacetileset.h"
 #include "session.h"
 #include "templatemanager.h"
-#include "tilesetmanager.h"
 #include "tilesetdocument.h"
-#include "tmxmapformat.h"
+#include "tilesetmanager.h"
 #include "toolmanager.h"
 #include "utils.h"
 
 #include <QAction>
 #include <QBoxLayout>
+#include <QEvent>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QLabel>
@@ -47,6 +47,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QSplitter>
 #include <QToolBar>
 #include <QUndoStack>
@@ -63,7 +64,7 @@ TemplatesDock::TemplatesDock(QWidget *parent)
     , mUndoAction(new QAction(this))
     , mRedoAction(new QAction(this))
     , mMapScene(new MapScene(this))
-    , mMapView(new MapView(this, MapView::NoStaticContents))
+    , mMapView(new MapView(this))
     , mToolManager(new ToolManager(this))
 {
     setObjectName(QLatin1String("TemplatesDock"));
@@ -154,6 +155,14 @@ TemplatesDock::~TemplatesDock()
         mDummyMapDocument->undoStack()->disconnect(this);
 }
 
+void TemplatesDock::changeEvent(QEvent *event)
+{
+    QDockWidget::changeEvent(event);
+
+    if (event->type() == QEvent::LanguageChange)
+        retranslateUi();
+}
+
 void TemplatesDock::setTile(Tile *tile)
 {
     mToolManager->setTile(tile);
@@ -236,14 +245,23 @@ void TemplatesDock::refreshDummyObject()
         mDummyMapDocument = ourDummyDocuments.value(mObjectTemplate);
 
         if (!mDummyMapDocument) {
-            Map::Orientation orientation = Map::Orthogonal;
-            std::unique_ptr<Map> map { new Map(orientation, 1, 1, 1, 1) };
+            // TODO: Isometric template objects are currently not supported
+            Map::Parameters mapParameters;
+
+            // Setting sizes to 1 makes it render a one-pixel square (the map
+            // border), which serves as a somewhat hacky origin indicator.
+            mapParameters.width = 1;
+            mapParameters.height = 1;
+            mapParameters.tileWidth = 1;
+            mapParameters.tileHeight = 1;
+
+            auto map = std::make_unique<Map>(mapParameters);
 
             MapObject *dummyObject = mObjectTemplate->object()->clone();
             dummyObject->markAsTemplateBase();
 
             if (Tileset *tileset = dummyObject->cell().tileset()) {
-                map->addTileset(tileset->sharedPointer());
+                map->addTileset(tileset->sharedFromThis());
                 dummyObject->setPosition({-dummyObject->width() / 2, dummyObject->height() / 2});
             } else {
                 dummyObject->setPosition({-dummyObject->width() / 2, -dummyObject->height()  /2});
@@ -359,30 +377,20 @@ void TemplatesDock::applyChanges()
 
     checkTileset();
 
-    ourEmittingChanged = true;
+    QScopedValueRollback<bool> emittingChanged(ourEmittingChanged, true);
     emit TemplateManager::instance()->objectTemplateChanged(mObjectTemplate);
-    ourEmittingChanged = false;
 }
 
 void TemplatesDock::focusInEvent(QFocusEvent *event)
 {
-    Q_UNUSED(event)
     mPropertiesDock->setDocument(mDummyMapDocument.data());
-}
-
-void TemplatesDock::focusOutEvent(QFocusEvent *event)
-{
-    Q_UNUSED(event)
-
-    if (hasFocus() || !mDummyMapDocument)
-        return;
-
-    mDummyMapDocument->setSelectedObjects(QList<MapObject*>());
+    QDockWidget::focusInEvent(event);
 }
 
 void TemplatesDock::retranslateUi()
 {
     setWindowTitle(tr("Template Editor"));
+    checkTileset();
 }
 
 void TemplatesDock::fixTileset()
@@ -395,17 +403,7 @@ void TemplatesDock::fixTileset()
         return;
 
     if (tileset->imageStatus() == LoadingError) {
-        // This code opens a new document even if there is a tileset document
-        auto tilesetDocument = DocumentManager::instance()->findTilesetDocument(tileset);
-
-        if (!tilesetDocument) {
-            auto newTilesetDocument = TilesetDocumentPtr::create(tileset);
-            tilesetDocument = newTilesetDocument.data();
-            DocumentManager::instance()->addDocument(newTilesetDocument);
-        } else {
-            DocumentManager::instance()->openTileset(tileset);
-        }
-
+        auto tilesetDocument = DocumentManager::instance()->openTileset(tileset);
         connect(tilesetDocument, &TilesetDocument::tilesetChanged,
                 this, &TemplatesDock::checkTileset, Qt::UniqueConnection);
     } else if (!tileset->fileName().isEmpty() && tileset->status() == LoadingError) {

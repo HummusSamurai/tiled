@@ -29,7 +29,7 @@
   <?endif ?>
 
   <Product Name='$(var.ProductName)' Id="*"
-           UpgradeCode="$(var.UpgradeCode)" 
+           UpgradeCode="$(var.UpgradeCode)"
            Language='1033' Codepage='1252' Version='$(var.Version)' Manufacturer='$(var.Manufacturer)'>
 
     <Package Id='*' Keywords='Installer' Description="[ProductName] Installer"
@@ -80,16 +80,20 @@
               <Shortcut Id="startmenuTiled" Directory="ProgramMenuFolder" Name="Tiled" WorkingDirectory='INSTALLDIR' Icon="tiled.exe" IconIndex="0" Advertise="yes" />
             </File>
             <File Source="$(var.InstallRoot)\terraingenerator.exe" />
-            <File Source="$(var.InstallRoot)\tiled.dll" />
+            <File Source="$(var.InstallRoot)\libtiled.dll" />
+            <File Source="$(var.InstallRoot)\tilededitor.dll" />
             <File Source="$(var.InstallRoot)\tmxrasterizer.exe" />
             <File Source="$(var.InstallRoot)\tmxviewer.exe" />
             <File Source="$(var.RootDir)\dist\win\qt.conf" />
-            <File Source="$(var.QtDir)\bin\Qt5Core.dll"/>
-            <File Source="$(var.QtDir)\bin\Qt5Gui.dll"/>
-            <File Source="$(var.QtDir)\bin\Qt5Network.dll"/>
-            <File Source="$(var.QtDir)\bin\Qt5Qml.dll"/>
-            <File Source="$(var.QtDir)\bin\Qt5Svg.dll"/>
-            <File Source="$(var.QtDir)\bin\Qt5Widgets.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Concurrent.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Core.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Gui.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Network.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Qml.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Svg.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)Widgets.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)OpenGL.dll"/>
+            <File Source="$(var.QtDir)\bin\Qt$(var.QtVersionMajor)OpenGLWidgets.dll"/>
 
             <?ifdef MingwDir ?>
               <?if $(var.Platform) = x64 ?>
@@ -108,19 +112,10 @@
               <?endif?>
             <?endif?>
 
-            <?ifdef OpenSsl102Dir ?>
-              <File Source="$(var.OpenSsl102Dir)\libeay32.dll" />
-              <File Source="$(var.OpenSsl102Dir)\ssleay32.dll" />
-            <?endif?>
-
-            <?ifdef OpenSsl111Dir ?>
-              <?if $(var.Platform) = x64 ?>
-                <File Source="$(var.OpenSsl111Dir)\libcrypto-1_1-x64.dll" />
-                <File Source="$(var.OpenSsl111Dir)\libssl-1_1-x64.dll" />
-              <?else?>
-                <File Source="$(var.OpenSsl111Dir)\libcrypto-1_1.dll" />
-                <File Source="$(var.OpenSsl111Dir)\libssl-1_1.dll" />
-              <?endif?>
+            <?ifdef Sentry ?>
+              <File Source="$(var.InstallRoot)\libsentry.dll"/>
+              <File Source="$(var.InstallRoot)\crashpad_handler.exe"/>
+              <File Source="$(var.InstallRoot)\crashpad_wer.dll"/>
             <?endif?>
 
             <File Name="COPYING.txt" Source="$(var.RootDir)\COPYING"/>
@@ -161,6 +156,7 @@
                 <?endif?>
 
                 <File Source="$(var.InstallRoot)\plugins\tiled\replicaisland.dll" />
+                <File Source="$(var.InstallRoot)\plugins\tiled\rpd.dll" />
 
                 <?ifdef RpMap ?>
                 <File Source="$(var.InstallRoot)\plugins\tiled\rpmap.dll" />
@@ -168,6 +164,7 @@
 
                 <File Source="$(var.InstallRoot)\plugins\tiled\tbin.dll" />
                 <File Source="$(var.InstallRoot)\plugins\tiled\tengine.dll" />
+                <File Source="$(var.InstallRoot)\plugins\tiled\tscn.dll" />
                 <File Source="$(var.InstallRoot)\plugins\tiled\yy.dll" />
               </Component>
             </Directory>
@@ -183,6 +180,9 @@
             </Directory>
             <Directory Id="imageFormatPlugins" Name="imageformats">
               <Component Id="ImageFormatPlugins" Guid="{C655A440-9F24-4489-8DB9-5A4EFF6EB5D7}">
+                <?ifdef AsepriteImageFormatPlugin ?>
+                <File Source="$(var.QtDir)\plugins\imageformats\$(var.AsepriteImageFormatPlugin)"/>
+                <?endif?>
                 <File Source="$(var.QtDir)\plugins\imageformats\qgif.dll"/>
                 <File Source="$(var.QtDir)\plugins\imageformats\qjpeg.dll"/>
                 <File Source="$(var.QtDir)\plugins\imageformats\qsvg.dll"/>
@@ -192,13 +192,18 @@
                 <File Source="$(var.QtDir)\plugins\imageformats\qwebp.dll"/>
               </Component>
             </Directory>
-            <?ifdef WindowsVistaStyle ?>
+            <?ifdef WindowsStylePlugin ?>
             <Directory Id="stylePlugins" Name="styles">
               <Component Id="StylePlugins" Guid="{DB5D5DD3-1128-4FE0-A76C-EB7E4069EBFE}">
-                <File Source="$(var.QtDir)\plugins\styles\qwindowsvistastyle.dll"/>
+                <File Source="$(var.QtDir)\plugins\styles\$(var.WindowsStylePlugin)"/>
               </Component>
             </Directory>
             <?endif?>
+            <Directory Id="tlsPlugins" Name="tls">
+              <Component Id="TlsPlugins" Guid="{98C9FB27-68C9-4B85-AE3B-B59B3735A38E}">
+                <File Source="$(var.QtDir)\plugins\tls\qschannelbackend.dll"/>
+              </Component>
+            </Directory>
           </Directory>
 
           <Directory Id="dir674F7F6D2030C2EBF39AA06B57EAF368" Name="translations">
@@ -220,7 +225,10 @@
               <File Source="$(var.InstallRoot)\translations\tiled_pt.qm" />
               <File Source="$(var.InstallRoot)\translations\tiled_pt_PT.qm" />
               <File Source="$(var.InstallRoot)\translations\tiled_ru.qm" />
+              <File Source="$(var.InstallRoot)\translations\tiled_sv.qm" />
+              <File Source="$(var.InstallRoot)\translations\tiled_th.qm" />
               <File Source="$(var.InstallRoot)\translations\tiled_tr.qm" />
+              <File Source="$(var.InstallRoot)\translations\tiled_uk.qm" />
               <File Source="$(var.InstallRoot)\translations\tiled_zh_CN.qm" />
               <File Source="$(var.InstallRoot)\translations\tiled_zh_TW.qm" />
 
@@ -231,8 +239,12 @@
               <File Source="$(var.QtDir)\translations\qt_fr.qm"/>
               <File Source="$(var.QtDir)\translations\qt_he.qm"/>
               <File Source="$(var.QtDir)\translations\qt_ja.qm"/>
-              <File Source="$(var.QtDir)\translations\qt_pt.qm"/>
+              <File Source="$(var.QtDir)\translations\qt_pl.qm"/>
+              <File Source="$(var.QtDir)\translations\qt_pt_BR.qm"/>
+              <File Source="$(var.QtDir)\translations\qt_pt_PT.qm"/>
               <File Source="$(var.QtDir)\translations\qt_ru.qm"/>
+              <File Source="$(var.QtDir)\translations\qt_sv.qm"/>
+              <File Source="$(var.QtDir)\translations\qt_uk.qm"/>
               <File Source="$(var.QtDir)\translations\qt_zh_CN.qm"/>
               <File Source="$(var.QtDir)\translations\qt_zh_TW.qm"/>
             </Component>
@@ -419,9 +431,10 @@
       <ComponentRef Id='PlatformPlugins' />
       <ComponentRef Id='ImageFormatPlugins' />
       <ComponentRef Id='IconEnginePlugins' />
-      <?ifdef WindowsVistaStyle ?>
-      <ComponentRef Id='StylePlugins' />
+      <?ifdef WindowsStylePlugin ?>
+        <ComponentRef Id='StylePlugins' />
       <?endif?>
+      <ComponentRef Id='TlsPlugins' />
       <ComponentRef Id='ProgramMenuDir' />
     </Feature>
 

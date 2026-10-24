@@ -1,11 +1,10 @@
-import qbs
 import qbs.FileInfo
 import qbs.File
 import qbs.TextFile
 import qbs.Environment
 
 WindowsInstallerPackage {
-    builtByDefault: false
+    builtByDefault: project.windowsInstaller
     condition: {
         if (project.windowsInstaller) {
             if (!(qbs.toolchain.contains("mingw") || qbs.toolchain.contains("msvc"))) {
@@ -23,20 +22,16 @@ WindowsInstallerPackage {
     Depends { name: "Qt.core" }
 
     property string version: Environment.getEnv("TILED_MSI_VERSION") || project.version
-    property string bits: {
-        if (qbs.architecture === "x86_64")
-            return "64";
-        else
-            return "32";
-    }
 
-    targetName: "Tiled-" + project.version + "-win" + bits
+    targetName: "Tiled-" + project.version + "_" + qbs.architecture
 
     wix.defines: {
         var defs = [
             "Version=" + version,
             "InstallRoot=" + qbs.installRoot,
             "QtDir=" + FileInfo.joinPaths(Qt.core.binPath, ".."),
+            "QtVersionMajor=" + Qt.core.versionMajor,
+            "QtVersionMinor=" + Qt.core.versionMinor,
             "RootDir=" + project.sourceDirectory
         ];
 
@@ -51,32 +46,25 @@ WindowsInstallerPackage {
             }
         }
 
-        if (Qt.core.versionMinor >= 10)
-            defs.push("WindowsVistaStyle")
+        if (Qt.core.versionMinor >= 7)
+            defs.push("WindowsStylePlugin=qmodernwindowsstyle.dll")
+        else
+            defs.push("WindowsStylePlugin=qwindowsvistastyle.dll")
 
-        if (File.exists(Environment.getEnv("PYTHONHOME")))
+        if (project.sentry)
+            defs.push("Sentry");
+
+        var pythonHome = Environment.getEnv("PYTHONHOME");
+        if (pythonHome && File.exists(pythonHome))
             defs.push("Python");
 
-        var rpMapEnabled = (Qt.core.versionMajor > 5 || Qt.core.versionMinor >= 12) && !qbs.toolchain.contains("msvc")
+        var rpMapEnabled = !qbs.toolchain.contains("msvc")
         if (rpMapEnabled)
             defs.push("RpMap");
 
-        if (project.openSslPath) {
-            defs.push("OpenSsl111Dir=" + project.openSslPath);
-        } else {
-            // Not sure what this check should be exactly, but Qt 5.6.3 was
-            // built against OpenSSL 1.0.2 whereas Qt 5.12.5 was built against
-            // OpenSSL 1.1.1.
-            if (Qt.core.versionMinor >= 12) {
-                var openSslDir = "C:\\OpenSSL-v111-Win" + bits
-                if (File.exists(openSslDir))
-                    defs.push("OpenSsl111Dir=" + openSslDir);
-            } else {
-                var openSslDir = "C:\\OpenSSL-Win" + bits
-                if (File.exists(openSslDir))
-                    defs.push("OpenSsl102Dir=" + openSslDir);
-            }
-        }
+        var imageFormatsPath = FileInfo.joinPaths(Qt.core.pluginPath, "imageformats")
+        if (File.exists(FileInfo.joinPaths(imageFormatsPath, "qaseprite.dll")))
+            defs.push("AsepriteImageFormatPlugin=qaseprite.dll");
 
         return defs;
     }

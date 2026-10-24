@@ -32,12 +32,11 @@
 #include "objectselectionitem.h"
 #include "preferences.h"
 #include "session.h"
-#include "tilelayer.h"
 #include "utils.h"
 
 #include <QFileDialog>
-#include <QMessageBox>
 #include <QImageWriter>
+#include <QMessageBox>
 
 using namespace Tiled;
 
@@ -62,9 +61,6 @@ ExportAsImageDialog::ExportAsImageDialog(MapDocument *mapDocument,
 {
     mUi->setupUi(this);
     resize(Utils::dpiScaled(size()));
-#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
-    setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
-#endif
 
     QPushButton *saveButton = mUi->buttonBox->button(QDialogButtonBox::Save);
     saveButton->setText(tr("Export"));
@@ -179,11 +175,10 @@ void ExportAsImageDialog::accept()
 
     MapRenderer *renderer = mMapDocument->renderer();
 
-    QSize imageSize = renderer->mapBoundingRect().size();
+    QRect boundingRect = renderer->mapBoundingRect();
+    mMapDocument->map()->adjustBoundingRectForOffsetsAndImageLayers(boundingRect);
 
-    QMargins margins = mMapDocument->map()->computeLayerOffsetMargins();
-    imageSize.setWidth(imageSize.width() + margins.left() + margins.right());
-    imageSize.setHeight(imageSize.height() + margins.top() + margins.bottom());
+    QSize imageSize = boundingRect.size();
 
     if (session::useCurrentScale)
         imageSize *= mCurrentScale;
@@ -208,7 +203,14 @@ void ExportAsImageDialog::accept()
 
         miniMapRenderer.renderToImage(image, renderFlags);
 
-        image.save(fileName);
+        QImageWriter imageWriter(fileName);
+        if (!imageWriter.write(image)) {
+            QMessageBox::warning(this,
+                                 tr("Export Failed"),
+                                 tr("Could not save image to \"%1\":\n%2")
+                                     .arg(fileName, imageWriter.errorString()));
+            return;
+        }
 
     } catch (const std::bad_alloc &) {
         QMessageBox::critical(this,

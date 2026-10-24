@@ -21,7 +21,6 @@
 
 #include "commandmanager.h"
 
-#include "commanddatamodel.h"
 #include "commanddialog.h"
 #include "logginginterface.h"
 #include "pluginmanager.h"
@@ -34,12 +33,9 @@
 #include <QLatin1String>
 #include <QMenu>
 
-#include "qtcompat_p.h"
-
 namespace Tiled {
 
 CommandManager::CommandManager()
-    : mModel(new CommandDataModel(this))
 {
     auto preferences = Preferences::instance();
 
@@ -63,6 +59,9 @@ CommandManager::CommandManager()
 #elif defined(Q_OS_MAC)
         command.executable = QLatin1String("open");
         command.arguments = QLatin1String("-t %mapfile");
+#elif defined(Q_OS_WIN)
+        command.executable = QLatin1String("notepad.exe");
+        command.arguments = QLatin1String("%mapfile");
 #endif
         if (!command.executable.isEmpty()) {
             command.name = tr("Open in text editor");
@@ -108,7 +107,7 @@ const QVector<Command> &CommandManager::globalCommands() const
 
 const QVector<Command> &CommandManager::projectCommands() const
 {
-    auto &project = ProjectManager::instance()->project();
+    const auto &project = ProjectManager::instance()->project();
     return project.mCommands;
 }
 
@@ -146,7 +145,7 @@ void CommandManager::showDialog()
 void CommandManager::commit()
 {
     QVariantList commands;
-    for (const Command &command : qAsConst(mCommands))
+    for (const Command &command : std::as_const(mCommands))
         commands.append(command.toVariant());
 
     Preferences::instance()->setValue(QLatin1String("commandList"), commands);
@@ -174,7 +173,7 @@ void CommandManager::updateActions()
     };
 
     // Add global commands
-    for (const Command &command : qAsConst(mCommands))
+    for (const Command &command : std::as_const(mCommands))
         addAction(command);
 
     addSeparator();

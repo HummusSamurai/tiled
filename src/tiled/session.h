@@ -20,11 +20,15 @@
 
 #pragma once
 
+#include "tilededitor_global.h"
+
 #include <QDir>
 #include <QHash>
 #include <QPointF>
+#include <QSet>
 #include <QSettings>
 #include <QSize>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
 #include <QVariantMap>
@@ -60,60 +64,112 @@ inline QString FileHelper::relative(const QString &fileName) const
 
 inline QString FileHelper::resolve(const QString &fileName) const
 {
-    if (fileName.isEmpty())
-        return QString();
+    if (fileName.isEmpty() || fileName.startsWith(QLatin1String("ext:")))
+        return fileName;
     return QDir::cleanPath(mDir.filePath(fileName));
 }
 
 
+/**
+ * Converts between a value of type T and the QVariant stored in the session
+ * settings. Specialize this struct to support additional types.
+ *
+ * Function templates can't be partially specialized, so this struct is used to
+ * support container types like QList<T> and QSet<T> generically.
+ */
+template<typename T>
+struct SettingsValue
+{
+    static T from(const QVariant &value) { return value.value<T>(); }
+    static QVariant to(const T &value) { return QVariant::fromValue(value); }
+};
+
+/**
+ * Stores a sequence or set as a QVariantList, converting each element through
+ * its own SettingsValue conversion. This keeps container types serializable by
+ * the JSON settings backend, which does not support arbitrary QVariant types.
+ */
+template<typename Container>
+struct SettingsValueList
+{
+    static Container from(const QVariant &value)
+    {
+        const auto variantList = value.toList();
+        Container container;
+        container.reserve(variantList.size());
+        for (const auto &variantValue : variantList)
+            container << SettingsValue<typename Container::value_type>::from(variantValue);
+        return container;
+    }
+
+    static QVariant to(const Container &container)
+    {
+        QVariantList variantList;
+        variantList.reserve(container.size());
+        for (const auto &value : container)
+            variantList.append(SettingsValue<typename Container::value_type>::to(value));
+        return variantList;
+    }
+};
+
+template<typename T>
+struct SettingsValue<QList<T>> : SettingsValueList<QList<T>> {};
+
+template<typename T>
+struct SettingsValue<QSet<T>> : SettingsValueList<QSet<T>> {};
+
+template<>
+struct SettingsValue<QSize>
+{
+    static QSize from(const QVariant &value)
+    {
+        const auto map = value.toMap();
+        return QSize(map.value(QLatin1String("width")).toInt(),
+                     map.value(QLatin1String("height")).toInt());
+    }
+
+    static QVariant to(const QSize &size)
+    {
+        return QVariantMap {
+            { QLatin1String("width"), size.width() },
+            { QLatin1String("height"), size.height() }
+        };
+    }
+};
+
+template<>
+struct SettingsValue<QPointF>
+{
+    static QPointF from(const QVariant &value)
+    {
+        const auto map = value.toMap();
+        return QPointF(map.value(QLatin1String("x")).toReal(),
+                       map.value(QLatin1String("y")).toReal());
+    }
+
+    static QVariant to(const QPointF &point)
+    {
+        return QVariantMap {
+            { QLatin1String("x"), point.x() },
+            { QLatin1String("y"), point.y() }
+        };
+    }
+};
+
 template<typename T>
 T fromSettingsValue(const QVariant &value)
 {
-    return value.value<T>();
+    return SettingsValue<T>::from(value);
 }
 
 template<typename T>
 QVariant toSettingsValue(const T &value)
 {
-    return QVariant::fromValue(value);
-}
-
-template<>
-inline QSize fromSettingsValue<QSize>(const QVariant &value)
-{
-    const auto map = value.toMap();
-    return QSize(map.value(QLatin1String("width")).toInt(),
-                 map.value(QLatin1String("height")).toInt());
-}
-
-template<>
-inline QVariant toSettingsValue<QSize>(const QSize &size)
-{
-    return QVariantMap {
-        { QLatin1String("width"), size.width() },
-        { QLatin1String("height"), size.height() }
-    };
-}
-
-template<>
-inline QPointF fromSettingsValue<QPointF>(const QVariant &value)
-{
-    const auto map = value.toMap();
-    return QPointF(map.value(QLatin1String("x")).toReal(),
-                   map.value(QLatin1String("y")).toReal());
-}
-
-template<>
-inline QVariant toSettingsValue<QPointF>(const QPointF &point)
-{
-    return QVariantMap {
-        { QLatin1String("x"), point.x() },
-        { QLatin1String("y"), point.y() }
-    };
+    return SettingsValue<T>::to(value);
 }
 
 
-class Session : protected FileHelper
+class TILED_EDITOR_EXPORT Session : protected FileHelper
 {
     std::unique_ptr<QSettings> settings;
 
@@ -139,15 +195,19 @@ public:
     void setFileStateValue(const QString &fileName, const QString &name, const QVariant &value);
 
     enum FileType {
+        ExecutablePath,
         ExportedFile,
         ExternalTileset,
         ImageFile,
         ObjectTemplateFile,
-        ObjectTypesFile,
+        PropertyTypesFile,
+        WorkingDirectory,
         WorldFile,
+        ShortcutSettingsFile,
     };
 
-    QString lastPath(FileType fileType) const;
+    QString lastPath(FileType fileType,
+                     QStandardPaths::StandardLocation fallback = QStandardPaths::DocumentsLocation) const;
     void setLastPath(FileType fileType, const QString &path);
 
     template <typename T>
@@ -160,13 +220,15 @@ public:
     template <typename T>
     void set(const char *key, const T &value) const
     {
+        const QLatin1String latin1Key(key);
+        const QString stringKey(latin1Key);
         const auto settingsValue = toSettingsValue(value);
-        if (settings->value(QLatin1String(key)) == settingsValue)
+        if (settings->value(stringKey) == settingsValue)
             return;
 
-        settings->setValue(QLatin1String(key), settingsValue);
+        settings->setValue(stringKey, settingsValue);
 
-        const auto it = Session::mChangedCallbacks.constFind(key);
+        const auto it = Session::mChangedCallbacks.constFind(latin1Key);
         if (it != Session::mChangedCallbacks.constEnd())
             for (const auto &cb : it.value())
                 cb();
@@ -182,6 +244,7 @@ public:
 
     static Session &initialize();
     static Session &current();
+    static bool hasCurrent() { return mCurrent != nullptr; }
     static Session &switchCurrent(const QString &fileName);
     static void deinitialize();
 
@@ -205,7 +268,7 @@ private:
     QTimer mSyncSettingsTimer;
 
     static std::unique_ptr<Session> mCurrent;
-    static QHash<const char*, Callbacks> mChangedCallbacks;
+    static QHash<QLatin1String, Callbacks> mChangedCallbacks;
 };
 
 inline QString Session::fileName() const
@@ -255,7 +318,7 @@ void SessionOption<T>::set(const T &value)
 template<typename T>
 Session::CallbackIterator SessionOption<T>::onChange(const Session::ChangedCallback &callback)
 {
-    Session::Callbacks &callbacks = Session::mChangedCallbacks[mKey];
+    Session::Callbacks &callbacks = Session::mChangedCallbacks[QLatin1String(mKey)];
     callbacks.push_front(callback);
     return callbacks.begin();
 }
@@ -263,7 +326,7 @@ Session::CallbackIterator SessionOption<T>::onChange(const Session::ChangedCallb
 template<typename T>
 void SessionOption<T>::unregister(Session::CallbackIterator it)
 {
-    Session::Callbacks &callbacks = Session::mChangedCallbacks[mKey];
+    Session::Callbacks &callbacks = Session::mChangedCallbacks[QLatin1String(mKey)];
     callbacks.erase(it);
 }
 

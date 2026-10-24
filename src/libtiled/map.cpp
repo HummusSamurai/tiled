@@ -30,41 +30,38 @@
 
 #include "map.h"
 
+#include "imagelayer.h"
 #include "layer.h"
+#include "mapobject.h"
 #include "objectgroup.h"
 #include "objecttemplate.h"
-#include "tile.h"
 #include "tilelayer.h"
-#include "mapobject.h"
 
 #include <QtMath>
 
 using namespace Tiled;
 
 Map::Map()
+    : Map(Parameters())
+{
+}
+
+Map::Map(const Parameters &parameters)
     : Object(MapType)
+    , mParameters(parameters)
 {
 }
 
 Map::Map(Orientation orientation,
-         int width, int height, int tileWidth, int tileHeight, bool infinite)
-    : Object(MapType)
-    , mOrientation(orientation)
-    , mWidth(width)
-    , mHeight(height)
-    , mTileWidth(tileWidth)
-    , mTileHeight(tileHeight)
-    , mInfinite(infinite)
+         int width, int height,
+         int tileWidth, int tileHeight)
+    : Map()
 {
-}
-
-Map::Map(Orientation orientation,
-         QSize size, QSize tileSize, bool infinite)
-    : Map(orientation,
-          size.width(), size.height(),
-          tileSize.width(), tileSize.height(),
-          infinite)
-{
+    mParameters.orientation = orientation;
+    mParameters.width = width;
+    mParameters.height = height;
+    mParameters.tileWidth = tileWidth;
+    mParameters.tileHeight = tileHeight;
 }
 
 Map::~Map()
@@ -85,26 +82,54 @@ QMargins Map::drawMargins() const
 }
 
 /**
- * Computes the extra margins due to layer offsets. These need to be taken into
- * account when determining the bounding rect of the map for example.
+ * Adjusts the given \a boundingRect to account for layer offsets and image
+ * layers.
+ *
+ * The bounding rect is assumed to already cover the tile content of the map in
+ * pixels. This function may extend it, when an offset has been applied to any
+ * tile layers and when any image layers extend beyond the map.
  */
-QMargins Map::computeLayerOffsetMargins() const
+void Map::adjustBoundingRectForOffsetsAndImageLayers(QRect &boundingRect) const
 {
     QMargins offsetMargins;
 
     for (const Layer *layer : allLayers()) {
-        if (layer->isGroupLayer())
-            continue;
-
-        const QPointF offset = layer->totalOffset();
-        offsetMargins = maxMargins(QMargins(qCeil(-offset.x()),
-                                            qCeil(-offset.y()),
-                                            qCeil(offset.x()),
-                                            qCeil(offset.y())),
-                                   offsetMargins);
+        switch (layer->layerType()) {
+        case Layer::TileLayerType: {
+            // Offset tile layers currently always contribute to the bounding
+            // rect. More precise would be to take into account their
+            // contents.
+            const QPointF offset = layer->totalOffset();
+            offsetMargins = QMargins(qCeil(-offset.x()),
+                                     qCeil(-offset.y()),
+                                     qCeil(offset.x()),
+                                     qCeil(offset.y())) | offsetMargins;
+            break;
+        }
+        case Layer::ImageLayerType: {
+            auto imageLayer = static_cast<const ImageLayer*>(layer);
+            const QRect bounds = QRectF(layer->totalOffset(),
+                                        imageLayer->image().size()).toAlignedRect();
+            if (!imageLayer->repeatX()) {
+                boundingRect.setRight(qMax(bounds.right(), boundingRect.right()));
+                boundingRect.setLeft(qMin(bounds.left(), boundingRect.left()));
+            }
+            if (!imageLayer->repeatY()) {
+                boundingRect.setTop(qMin(bounds.top(), boundingRect.top()));
+                boundingRect.setBottom(qMax(bounds.bottom(), boundingRect.bottom()));
+            }
+            break;
+        }
+        case Layer::ObjectGroupType:
+            // Objects are entirely ignored when determining which part of a
+            // map to render.
+            break;
+        case Layer::GroupLayerType:
+            break;
+        }
     }
 
-    return offsetMargins;
+    boundingRect += offsetMargins;
 }
 
 /**
@@ -117,24 +142,25 @@ void Map::recomputeDrawMargins() const
     QMargins offsetMargins;
 
     for (const SharedTileset &tileset : mTilesets) {
-        const QPoint offset = tileset->tileOffset();
-        const QSize tileSize = tileset->tileSize();
+        const bool useGridSize = tileset->tileRenderSize() == Tileset::GridSize;
+        const QSize tileSize = useGridSize ? this->tileSize()
+                                           : tileset->tileSize();
 
         maxTileSize = std::max(maxTileSize, std::max(tileSize.width(),
                                                      tileSize.height()));
 
-        offsetMargins = maxMargins(QMargins(-offset.x(),
-                                            -offset.y(),
-                                            offset.x(),
-                                            offset.y()),
-                                   offsetMargins);
+        const QPoint offset = tileset->tileOffset();
+        offsetMargins = QMargins(-offset.x(),
+                                 -offset.y(),
+                                 offset.x(),
+                                 offset.y()) | offsetMargins;
     }
 
     // We subtract the tile size of the map, since that part does not
     // contribute to additional margin.
     mDrawMargins = QMargins(offsetMargins.left(),
-                            offsetMargins.top() + maxTileSize - mTileHeight,
-                            offsetMargins.right() + maxTileSize - mTileWidth,
+                            offsetMargins.top() + maxTileSize - tileHeight(),
+                            offsetMargins.right() + maxTileSize - tileWidth(),
                             offsetMargins.bottom());
 
     mDrawMarginsDirty = false;
@@ -157,25 +183,6 @@ void Map::addLayer(Layer *layer)
 {
     adoptLayer(*layer);
     mLayers.append(layer);
-}
-
-/**
- * Returns the index of the layer given by \a layerName, or -1 if no
- * layer with that name is found.
- *
- * The second optional parameter specifies the layer types which are
- * searched.
- *
- * @deprecated Does not support group layers. Use findLayer() instead.
- */
-int Map::indexOfLayer(const QString &layerName, int layerTypes) const
-{
-    for (int index = 0; index < mLayers.size(); index++)
-        if (layerAt(index)->name() == layerName
-                && (layerTypes & layerAt(index)->layerType()))
-            return index;
-
-    return -1;
 }
 
 /**
@@ -347,17 +354,13 @@ bool Map::isTilesetUsed(const Tileset *tileset) const
 
 std::unique_ptr<Map> Map::clone() const
 {
-    auto o = std::make_unique<Map>(mOrientation, mWidth, mHeight, mTileWidth, mTileHeight, mInfinite);
+    auto o = std::make_unique<Map>(mParameters);
+    o->setClassName(className());
+    o->setProperties(properties());
     o->fileName = fileName;
     o->exportFileName = exportFileName;
     o->exportFormat = exportFormat;
-    o->mRenderOrder = mRenderOrder;
-    o->mCompressionLevel = mCompressionLevel;
-    o->mHexSideLength = mHexSideLength;
-    o->mStaggerAxis = mStaggerAxis;
-    o->mStaggerIndex = mStaggerIndex;
-    o->mBackgroundColor = mBackgroundColor;
-    o->mChunkSize = mChunkSize;
+    o->mEditorSettings = mEditorSettings;
     o->mDrawMargins = mDrawMargins;
     o->mDrawMarginsDirty = mDrawMarginsDirty;
     for (const Layer *layer : mLayers) {
@@ -366,11 +369,78 @@ std::unique_ptr<Map> Map::clone() const
         o->mLayers.append(clone);
     }
     o->mTilesets = mTilesets;
-    o->mLayerDataFormat = mLayerDataFormat;
     o->mNextLayerId = mNextLayerId;
     o->mNextObjectId = mNextObjectId;
-    o->setProperties(properties());
     return o;
+}
+
+/**
+ * Copies the given \a tileRegion of the \a layers to \a targetMap.
+ *
+ * Empty layers are included as well, to ensure a more consistent behavior when
+ * copy/pasting multiple layers.
+ *
+ * Currently only copies tile layers.
+ */
+void Map::copyLayers(const QList<Layer *> &layers,
+                     const QRegion &tileRegion,
+                     Map &targetMap) const
+{
+    LayerIterator layerIterator(this);
+    while (Layer *layer = layerIterator.next()) {
+        switch (layer->layerType()) {
+        case Layer::TileLayerType: {
+            if (!layers.contains(layer))    // ignore unselected tile layers
+                continue;
+
+            const TileLayer *tileLayer = static_cast<const TileLayer*>(layer);
+            const QRegion area = tileRegion.intersected(tileLayer->bounds());
+
+            // Copy the selected part of the layer
+            auto copyLayer = tileLayer->copy(area.translated(-tileLayer->position()));
+            copyLayer->setId(tileLayer->id());
+            copyLayer->setName(tileLayer->name());
+            copyLayer->setPosition(area.boundingRect().topLeft());
+            copyLayer->setOpacity(tileLayer->opacity());
+            copyLayer->setTintColor(tileLayer->tintColor());
+
+            targetMap.addLayer(std::move(copyLayer));
+            break;
+        }
+        case Layer::ObjectGroupType: // todo: maybe it makes sense to group selected objects by layer
+        case Layer::ImageLayerType:
+        case Layer::GroupLayerType:
+            break;  // nothing to do
+        }
+    }
+}
+
+/**
+ * Determines the unified content area of all tile layers and then repositions
+ * those layers to eliminate unnecessary offset. Also sets the size of the map
+ * to encompass the final tile layer contents exactly.
+ */
+void Map::normalizeTileLayerPositionsAndMapSize()
+{
+    LayerIterator it(this, Layer::TileLayerType);
+
+    QRect contentRect;
+    while (auto tileLayer = static_cast<TileLayer*>(it.next()))
+        contentRect |= tileLayer->region().boundingRect();
+
+    if (!contentRect.topLeft().isNull()) {
+        it.toFront();
+        while (auto tileLayer = static_cast<TileLayer*>(it.next()))
+            tileLayer->setPosition(tileLayer->position() - contentRect.topLeft());
+
+        // Adjust the stagger index when layers are moved by odd amounts
+        const int staggerOffset = (staggerAxis() == Map::StaggerX ? contentRect.x()
+                                                                  : contentRect.y()) % 2;
+        setStaggerIndex(static_cast<Map::StaggerIndex>((staggerIndex() + staggerOffset) % 2));
+    }
+
+    setWidth(contentRect.width());
+    setHeight(contentRect.height());
 }
 
 /**
@@ -424,12 +494,34 @@ MapObject *Map::findObjectById(int objectId) const
     return nullptr;
 }
 
-QRegion Map::tileRegion() const
+/**
+ * Returns the area occupied by tiles. Usually simply matches the map size,
+ * but for infinite maps it returns a rough (chunks based) bounding rectangle
+ * covering the contents of all tile layers.
+ */
+QRect Map::tileBoundingRect() const
+{
+    if (!infinite())
+        return QRect(0, 0, width(), height());
+
+    QRect mapBounds;
+
+    LayerIterator iterator(this, Layer::TileLayerType);
+    while (TileLayer *tileLayer = static_cast<TileLayer*>(iterator.next()))
+        mapBounds = mapBounds.united(tileLayer->bounds());
+
+    if (mapBounds.size() == QSize(0, 0))
+        mapBounds.setSize(QSize(1, 1));
+
+    return mapBounds;
+}
+
+QRegion Map::modifiedTileRegion() const
 {
     QRegion region;
     LayerIterator it(this, Layer::TileLayerType);
     while (auto tileLayer = static_cast<TileLayer*>(it.next()))
-        region |= tileLayer->region();
+        region |= tileLayer->modifiedRegion();
     return region;
 }
 
@@ -484,6 +576,8 @@ QString Tiled::orientationToString(Map::Orientation orientation)
         return QStringLiteral("staggered");
     case Map::Hexagonal:
         return QStringLiteral("hexagonal");
+    case Map::Oblique:
+        return QStringLiteral("oblique");
     }
     return QString();
 }
@@ -499,6 +593,8 @@ Map::Orientation Tiled::orientationFromString(const QString &string)
         orientation = Map::Staggered;
     } else if (string == QLatin1String("hexagonal")) {
         orientation = Map::Hexagonal;
+    } else if (string == QLatin1String("oblique")) {
+        orientation = Map::Oblique;
     }
     return orientation;
 }
@@ -538,12 +634,11 @@ QString Tiled::renderOrderToString(Map::RenderOrder renderOrder)
 Map::RenderOrder Tiled::renderOrderFromString(const QString &string)
 {
     Map::RenderOrder renderOrder = Map::RightDown;
-    if (string == QLatin1String("right-up")) {
+    if (string == QLatin1String("right-up"))
         renderOrder = Map::RightUp;
-    } else if (string == QLatin1String("left-down")) {
+    else if (string == QLatin1String("left-down"))
         renderOrder = Map::LeftDown;
-    } else if (string == QLatin1String("left-up")) {
+    else if (string == QLatin1String("left-up"))
         renderOrder = Map::LeftUp;
-    }
     return renderOrder;
 }

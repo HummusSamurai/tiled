@@ -34,6 +34,7 @@
 namespace Tiled {
 
 class ObjectGroup;
+class WangColor;
 
 class MapDocument;
 class TilesetDocument;
@@ -45,19 +46,19 @@ using TilesetDocumentPtr = QSharedPointer<TilesetDocument>;
 /**
  * Represents an editable tileset.
  */
-class TilesetDocument : public Document
+class TilesetDocument final : public Document
 {
     Q_OBJECT
 
 public:
-    TilesetDocument(const SharedTileset &tileset);
+    explicit TilesetDocument(const SharedTileset &tileset);
     ~TilesetDocument() override;
 
     TilesetDocumentPtr sharedFromThis() { return qSharedPointerCast<TilesetDocument>(Document::sharedFromThis()); }
 
     bool save(const QString &fileName, QString *error = nullptr) override;
 
-    bool canReload() const;
+    bool canReload() const override;
     bool reload(QString *error);
 
     /**
@@ -83,7 +84,7 @@ public:
     void swapTileset(SharedTileset &tileset);
     const SharedTileset &tileset() const;
 
-    EditableTileset *editable() override;
+    EditableTileset *editable();
 
     bool isEmbedded() const;
     void setClean();
@@ -99,6 +100,7 @@ public:
 
     void addTiles(const QList<Tile*> &tiles);
     void removeTiles(const QList<Tile*> &tiles);
+    QList<int> relocateTiles(const QList<Tile *> &tiles, int location);
 
     const QList<Tile*> &selectedTiles() const;
     void setSelectedTiles(const QList<Tile*> &selectedTiles);
@@ -109,7 +111,6 @@ public:
 
     WangColorModel *wangColorModel(WangSet *wangSet);
 
-    void setTileType(Tile *tile, const QString &type);
     void setTileImage(Tile *tile, const QPixmap &image, const QUrl &source);
     void setTileProbability(Tile *tile, qreal probability);
     void swapTileObjectGroup(Tile *tile, std::unique_ptr<ObjectGroup> &objectGroup);
@@ -135,7 +136,6 @@ signals:
     void tilesetTileOffsetChanged(Tileset *tileset);
     void tilesetObjectAlignmentChanged(Tileset *tileset);
 
-    void tileTypeChanged(Tile *tile);
     void tileImageSourceChanged(Tile *tile);
 
     /**
@@ -164,6 +164,9 @@ signals:
      */
     void selectedTilesChanged();
 
+protected:
+    std::unique_ptr<EditableAsset> createEditable() override;
+
 private:
     void onPropertyAdded(Object *object, const QString &name);
     void onPropertyRemoved(Object *object, const QString &name);
@@ -187,6 +190,11 @@ private:
 inline const SharedTileset &TilesetDocument::tileset() const
 {
     return mTileset;
+}
+
+inline EditableTileset *TilesetDocument::editable()
+{
+    return static_cast<EditableTileset*>(Document::editable());
 }
 
 inline bool TilesetDocument::isEmbedded() const

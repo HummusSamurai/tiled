@@ -27,11 +27,11 @@
 #include "mapdocument.h"
 #include "mapobject.h"
 #include "projectmanager.h"
-#include "worlddocument.h"
 #include "worldmanager.h"
 
 #include <QAction>
 #include <QDir>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QProcess>
 #include <QStandardPaths>
@@ -72,13 +72,18 @@ static QString replaceVariables(const QString &string, bool quoteValues = true)
 
     // Perform variable replacement
     if (Document *document = DocumentManager::instance()->currentDocument()) {
-        const QString fileName = document->fileName();
-        QFileInfo fileInfo(fileName);
-        const QString mapPath = fileInfo.absolutePath();
+        const QString &fileName = document->fileName();
+        const QString mapPath = QFileInfo(fileName).absolutePath();
+
+        const QString &exportFileName = document->lastExportFileName();
+        const QString exportPath = QFileInfo(exportFileName).absolutePath();
+
         const QString projectPath = QFileInfo(ProjectManager::instance()->project().fileName()).absolutePath();
 
         finalString.replace(QLatin1String("%mapfile"), replaceString.arg(fileName));
         finalString.replace(QLatin1String("%mappath"), replaceString.arg(mapPath));
+        finalString.replace(QLatin1String("%exportfile"), replaceString.arg(exportFileName));
+        finalString.replace(QLatin1String("%exportpath"), replaceString.arg(exportPath));
         finalString.replace(QLatin1String("%projectpath"), replaceString.arg(projectPath));
 
         if (MapDocument *mapDocument = qobject_cast<MapDocument*>(document)) {
@@ -88,18 +93,26 @@ static QString replaceVariables(const QString &string, bool quoteValues = true)
             }
         } else if (TilesetDocument *tilesetDocument = qobject_cast<TilesetDocument*>(document)) {
             QStringList selectedTileIds;
-            for (Tile *tile : tilesetDocument->selectedTiles())
+            for (const Tile *tile : tilesetDocument->selectedTiles())
                 selectedTileIds.append(QString::number(tile->id()));
 
             finalString.replace(QLatin1String("%tileid"),
                                 replaceString.arg(selectedTileIds.join(QLatin1Char(','))));
         }
 
-        if (MapObject *currentObject = dynamic_cast<MapObject *>(document->currentObject())) {
+        if (const MapObject *currentObject = dynamic_cast<MapObject *>(document->currentObject())) {
+            // For compatility with Tiled < 1.9
             finalString.replace(QLatin1String("%objecttype"),
-                                replaceString.arg(currentObject->type()));
+                                replaceString.arg(currentObject->className()));
+
+            finalString.replace(QLatin1String("%objectclass"),
+                                replaceString.arg(currentObject->className()));
             finalString.replace(QLatin1String("%objectid"),
                                 replaceString.arg(currentObject->id()));
+        }
+
+        if (auto worldDocument = WorldManager::instance().worldForMap(fileName)) {
+            finalString.replace(QLatin1String("%worldfile"), replaceString.arg(worldDocument->fileName()));
         }
     }
 
@@ -129,7 +142,14 @@ QString Command::finalWorkingDirectory() const
  */
 QString Command::finalCommand() const
 {
-    QString finalCommand = QStringLiteral("%1 %2").arg(executable, arguments);
+    QString exe = executable.trimmed();
+
+    // Quote the executable when not already done, to make it work even when
+    // the path contains spaces.
+    if (!exe.startsWith(QLatin1Char('"')) && !exe.startsWith(QLatin1Char('\'')))
+        exe.prepend(QLatin1Char('"')).append(QLatin1Char('"'));
+
+    QString finalCommand = QStringLiteral("%1 %2").arg(exe, arguments);
     return replaceVariables(finalCommand);
 }
 
@@ -143,9 +163,10 @@ void Command::execute(bool inTerminal) const
         ActionManager::instance()->action("Save")->trigger();
 
         if (Document *document = DocumentManager::instance()->currentDocument()) {
-            const World *world = WorldManager::instance().worldForMap(document->fileName());
-            if (world && WorldManager::instance().saveWorld(world->fileName))
-                DocumentManager::instance()->ensureWorldDocument(world->fileName)->undoStack()->setClean();
+            if (document->type() == Document::MapDocumentType) {
+                if (auto worldDocument = WorldManager::instance().worldForMap(document->fileName()))
+                    DocumentManager::instance()->saveDocument(worldDocument.data());
+            }
         }
     }
 
@@ -265,11 +286,8 @@ CommandProcess::CommandProcess(const Command &command, bool inTerminal, bool sho
 #endif
     }
 
-    connect(this, &QProcess::errorOccurred,
-            this, &CommandProcess::handleProcessError);
-
-    connect(this, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-            this, &QObject::deleteLater);
+    connect(this, &QProcess::errorOccurred, this, &CommandProcess::handleProcessError);
+    connect(this, &QProcess::finished, this, &QObject::deleteLater);
 
     if (showOutput) {
         Tiled::INFO(tr("Executing: %1").arg(mFinalCommand));
@@ -282,13 +300,7 @@ CommandProcess::CommandProcess(const Command &command, bool inTerminal, bool sho
     if (!finalWorkingDirectory.trimmed().isEmpty())
         setWorkingDirectory(finalWorkingDirectory);
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
-    start(mFinalCommand);
-#else
-    QStringList args = QProcess::splitCommand(mFinalCommand);
-    const QString executable = args.takeFirst();
-    start(executable, args);
-#endif
+    startCommand(mFinalCommand);
 }
 
 void CommandProcess::consoleOutput()

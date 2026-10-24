@@ -25,9 +25,6 @@
 #include "utils.h"
 
 #include <QFileInfo>
-#include <QStandardPaths>
-
-#include "qtcompat_p.h"
 
 namespace Tiled {
 
@@ -43,6 +40,7 @@ void FileHelper::setFileName(const QString &fileName)
 QStringList FileHelper::relative(const QStringList &fileNames) const
 {
     QStringList result;
+    result.reserve(fileNames.size());
     for (const QString &fileName : fileNames)
         result.append(relative(fileName));
     return result;
@@ -51,12 +49,13 @@ QStringList FileHelper::relative(const QStringList &fileNames) const
 QStringList FileHelper::resolve(const QStringList &fileNames) const
 {
     QStringList result;
+    result.reserve(fileNames.size());
     for (const QString &fileName : fileNames)
         result.append(resolve(fileName));
     return result;
 }
 
-QHash<const char*, Session::Callbacks> Session::mChangedCallbacks;
+QHash<QLatin1String, Session::Callbacks> Session::mChangedCallbacks;
 std::unique_ptr<Session> Session::mCurrent;
 
 Session::Session(const QString &fileName)
@@ -197,6 +196,9 @@ static QString lastPathKey(Session::FileType fileType)
     QString key = QLatin1String("last.");
 
     switch (fileType) {
+    case Session::ExecutablePath:
+        key.append(QLatin1String("executablePath"));
+        break;
     case Session::ExportedFile:
         key.append(QLatin1String("exportedFilePath"));
         break;
@@ -209,11 +211,17 @@ static QString lastPathKey(Session::FileType fileType)
     case Session::ObjectTemplateFile:
         key.append(QLatin1String("objectTemplatePath"));
         break;
-    case Session::ObjectTypesFile:
+    case Session::PropertyTypesFile:
         key.append(QLatin1String("objectTypesPath"));
+        break;
+    case Session::WorkingDirectory:
+        key.append(QLatin1String("workingDirectory"));
         break;
     case Session::WorldFile:
         key.append(QLatin1String("worldFilePath"));
+        break;
+    case Session::ShortcutSettingsFile:
+        key.append(QLatin1String("shortcutSettingsFilePath"));
         break;
     }
 
@@ -223,7 +231,7 @@ static QString lastPathKey(Session::FileType fileType)
 /**
  * Returns the starting location for a file chooser for the given file type.
  */
-QString Session::lastPath(FileType fileType) const
+QString Session::lastPath(FileType fileType, QStandardPaths::StandardLocation fallbackLocation) const
 {
     // First see if we can return the last used location for this file type
     QString path = settings->value(lastPathKey(fileType)).toString();
@@ -231,12 +239,14 @@ QString Session::lastPath(FileType fileType) const
         return path;
 
     // The location of the current document could be helpful
-    const DocumentManager *documentManager = DocumentManager::instance();
-    const Document *document = documentManager->currentDocument();
-    if (document) {
-        path = QFileInfo(document->fileName()).path();
-        if (!path.isEmpty())
-            return path;
+    if (fallbackLocation == QStandardPaths::DocumentsLocation) {
+        const DocumentManager *documentManager = DocumentManager::instance();
+        const Document *document = documentManager->currentDocument();
+        if (document) {
+            path = QFileInfo(document->fileName()).path();
+            if (!path.isEmpty())
+                return path;
+        }
     }
 
     // Try the location of the current project
@@ -246,8 +256,8 @@ QString Session::lastPath(FileType fileType) const
             return path;
     }
 
-    // Finally, we just open the 'Documents' folder
-    return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    // Finally, we just open the fallback location
+    return QStandardPaths::writableLocation(fallbackLocation);
 }
 
 /**
@@ -263,7 +273,7 @@ void Session::setLastPath(FileType fileType, const QString &path)
 
 QString Session::defaultFileName()
 {
-    return Preferences::dataLocation() + QLatin1String("/default.tiled-session");
+    return Preferences::instance()->dataLocation() + QLatin1String("/default.tiled-session");
 }
 
 QString Session::defaultFileNameForProject(const QString &projectFile)
@@ -324,7 +334,7 @@ Session &Session::switchCurrent(const QString &fileName)
         migratePreferences();
 
     // Call all registered callbacks because any value may have changed
-    for (const auto &callbacks : qAsConst(mChangedCallbacks))
+    for (const auto &callbacks : std::as_const(mChangedCallbacks))
         for (const auto &callback : callbacks)
             callback();
 

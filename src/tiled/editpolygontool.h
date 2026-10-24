@@ -92,9 +92,15 @@ private:
     void startMoving(const QPointF &pos);
     void updateMovingItems(const QPointF &pos,
                            Qt::KeyboardModifiers modifiers);
-    void finishMoving(const QPointF &pos);
+    void finishMoving();
 
-    void abortCurrentAction(const QList<MapObject *> &objects = QList<MapObject*>());
+    enum AbortReason {
+        UserInteraction,
+        ObjectsRemoved,
+        Deactivated
+    };
+
+    void abortCurrentAction(AbortReason reason);
 
     void showHandleContextMenu(QPoint screenPos);
 
@@ -130,6 +136,7 @@ private:
     QPointF mLastMousePos;
     QPoint mScreenStart;
     Qt::KeyboardModifiers mModifiers;
+    bool mMergeUndo = false;
 
     /// The list of handles associated with each selected map object
     QHash<MapObject*, QList<PointHandle*> > mHandles;

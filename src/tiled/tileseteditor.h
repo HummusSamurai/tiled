@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "clipboardmanager.h"
 #include "editor.h"
 #include "wangset.h"
 
@@ -40,6 +39,7 @@ namespace Tiled {
 class Tile;
 class Tileset;
 
+class EditableWangSet;
 class PropertiesDock;
 class TemplatesDock;
 class TileAnimationEditor;
@@ -51,11 +51,13 @@ class UndoDock;
 class WangDock;
 class Zoomable;
 
-class TilesetEditor : public Editor
+class TilesetEditor final : public Editor
 {
     Q_OBJECT
 
-    Q_PROPERTY(Tiled::TileCollisionDock *collisionEditor READ collisionEditor)
+    Q_PROPERTY(Tiled::TileCollisionDock *collisionEditor READ collisionEditor CONSTANT)
+    Q_PROPERTY(Tiled::EditableWangSet *currentWangSet READ currentWangSet  WRITE setCurrentWangSet NOTIFY currentWangSetChanged)
+    Q_PROPERTY(int currentWangColorIndex READ currentWangColorIndex WRITE setCurrentWangColorIndex  NOTIFY currentWangColorIndexChanged)
 
 public:
     explicit TilesetEditor(QObject *parent = nullptr);
@@ -89,6 +91,8 @@ public:
 
     QAction *addTilesAction() const;
     QAction *removeTilesAction() const;
+    QAction *editTilesetParametersAction() const;
+    QAction *relocateTilesAction() const;
     QAction *editCollisionAction() const;
     QAction *editWangSetsAction() const;
     QAction *showAnimationEditor() const;
@@ -96,8 +100,17 @@ public:
     TileAnimationEditor *tileAnimationEditor() const;
     TileCollisionDock *collisionEditor() const;
 
+    EditableWangSet *currentWangSet() const;
+    void setCurrentWangSet(EditableWangSet *wangSet);
+
+    int currentWangColorIndex() const;
+    void setCurrentWangColorIndex(int newIndex);
+
 signals:
     void currentTileChanged(Tile *tile);
+
+    void currentWangSetChanged();
+    void currentWangColorIndexChanged(int colorIndex);
 
 private:
     void currentWidgetChanged();
@@ -113,18 +126,21 @@ private:
     void selectedTilesChanged();
     void updateTilesetView(Tileset *tileset);
 
+    void editTilesetParameters();
+
     void openAddTilesDialog();
     void addTiles(const QList<QUrl> &urls);
     void removeTiles();
 
+    void setRelocateTiles(bool relocateTiles);
     void setEditCollision(bool editCollision);
     void hasSelectedCollisionObjectsChanged();
 
     void setEditWang(bool editWang);
 
-    void updateAddRemoveActions();
+    void updateActions();
 
-    void currentWangSetChanged(WangSet *wangSet);
+    void onCurrentWangSetChanged(WangSet *wangSet);
     void currentWangIdChanged(WangId wangId);
     void wangColorChanged(int color);
     void addWangSet(WangSet::Type type);
@@ -134,6 +150,7 @@ private:
     void setWangColorImage(Tile *tile, int index);
     void setWangColorColor(WangColor *wangColor, const QColor &color);
 
+    void setAnimationEditorVisible(bool visible);
     void onAnimationEditorClosed();
 
     void setCurrentTile(Tile *tile);
@@ -147,6 +164,8 @@ private:
 
     QAction *mAddTiles;
     QAction *mRemoveTiles;
+    QAction *mEditTilesetParameters;
+    QAction *mRelocateTiles;
     QAction *mShowAnimationEditor;
     QAction *mDynamicWrappingToggle;
 
@@ -157,13 +176,13 @@ private:
     WangDock *mWangDock;
     QComboBox *mZoomComboBox;
     QLabel *mStatusInfoLabel;
-    TileAnimationEditor *mTileAnimationEditor;
+    TileAnimationEditor *mTileAnimationEditor = nullptr;
 
     QHash<TilesetDocument*, TilesetView*> mViewForTileset;
-    TilesetDocument *mCurrentTilesetDocument;
+    TilesetDocument *mCurrentTilesetDocument = nullptr;
 
-    Tile *mCurrentTile;
-    bool mSettingSelectedTiles = false;
+    Tile *mCurrentTile = nullptr;
+    bool mSynchronizingSelection = false;
 };
 
 inline QAction *TilesetEditor::addTilesAction() const
@@ -174,6 +193,16 @@ inline QAction *TilesetEditor::addTilesAction() const
 inline QAction *TilesetEditor::removeTilesAction() const
 {
     return mRemoveTiles;
+}
+
+inline QAction *TilesetEditor::editTilesetParametersAction() const
+{
+    return mEditTilesetParameters;
+}
+
+inline QAction *TilesetEditor::relocateTilesAction() const
+{
+    return mRelocateTiles;
 }
 
 inline QAction *TilesetEditor::showAnimationEditor() const
@@ -192,5 +221,3 @@ inline TileCollisionDock *TilesetEditor::collisionEditor() const
 }
 
 } // namespace Tiled
-
-Q_DECLARE_METATYPE(Tiled::TilesetEditor*)

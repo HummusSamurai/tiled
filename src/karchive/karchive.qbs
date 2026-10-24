@@ -1,10 +1,17 @@
-import qbs 1.0
+import qbs.FileInfo
 
 StaticLibrary {
-    condition: (Qt.core.versionMajor > 5 || Qt.core.versionMinor >= 12) && !qbs.toolchain.contains("msvc")
+    condition: !qbs.toolchain.contains("msvc")
 
     Depends { name: "cpp" }
     Depends { name: "Qt.core"; versionAtLeast: "5.12" }
+
+    // Avoid wrapping this in a static framework, whose code signing breaks
+    // the install step on macOS 26 with Qbs 3.2.0.
+    Properties {
+        condition: qbs.targetOS.contains("macos")
+        bundle.isBundle: false
+    }
 
     cpp.includePaths: [ "src" ]
     cpp.defines: [
@@ -56,7 +63,7 @@ StaticLibrary {
 
     Export {
         Depends { name: "cpp" }
-        cpp.includePaths: "src"
+        cpp.includePaths: FileInfo.joinPaths(exportingProduct.sourceDirectory, "src")
         cpp.defines: [
             "KARCHIVE_NO_DEPRECATED",
             "KARCHIVE_STATIC_DEFINE",

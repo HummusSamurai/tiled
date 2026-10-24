@@ -2,9 +2,9 @@
  * #%L
  * This file is part of libtiled-java.
  * %%
- * Copyright (C) 2004 - 2019 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2004 - 2019 Adam Turk <aturk@biggeruniverse.com>
- * Copyright (C) 2016 - 2019 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2004 - 2020 Adam Turk <aturk@biggeruniverse.com>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -33,21 +33,58 @@ package org.mapeditor.core;
 import java.awt.Rectangle;
 import java.util.Iterator;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlRootElement;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlRootElement;
 
 /**
  * The Map class is the focal point of the <code>org.mapeditor.core</code>
  * package.
  *
- * @version 1.2.3
+ * @version 1.4.2
  */
 @XmlRootElement(name = "map")
 @XmlAccessorType(XmlAccessType.NONE)
 public class Map extends MapData implements Iterable<MapLayer> {
 
     private String filename;
+
+    private Integer editorChunkWidth;
+    private Integer editorChunkHeight;
+    private String exportTarget;
+    private String exportFormat;
+
+    public Integer getEditorChunkWidth() {
+        return editorChunkWidth;
+    }
+
+    public void setEditorChunkWidth(Integer editorChunkWidth) {
+        this.editorChunkWidth = editorChunkWidth;
+    }
+
+    public Integer getEditorChunkHeight() {
+        return editorChunkHeight;
+    }
+
+    public void setEditorChunkHeight(Integer editorChunkHeight) {
+        this.editorChunkHeight = editorChunkHeight;
+    }
+
+    public String getExportTarget() {
+        return exportTarget;
+    }
+
+    public void setExportTarget(String exportTarget) {
+        this.exportTarget = exportTarget;
+    }
+
+    public String getExportFormat() {
+        return exportFormat;
+    }
+
+    public void setExportFormat(String exportFormat) {
+        this.exportFormat = exportFormat;
+    }
 
     /**
      * Constructor for Map.

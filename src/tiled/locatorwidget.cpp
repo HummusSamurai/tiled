@@ -22,13 +22,19 @@
 
 #include "documentmanager.h"
 #include "filteredit.h"
+#include "map.h"
+#include "mapdocument.h"
+#include "mapitem.h"
+#include "maprenderer.h"
+#include "mapscene.h"
+#include "mapview.h"
+#include "preferences.h"
 #include "projectmanager.h"
-#include "projectmodel.h"
-#include "rangeset.h"
+#include "tilehighlightitem.h"
 #include "utils.h"
 
-#include <QAbstractListModel>
 #include <QApplication>
+#include <QCollator>
 #include <QDir>
 #include <QKeyEvent>
 #include <QPainter>
@@ -42,50 +48,6 @@
 
 namespace Tiled {
 
-class MatchesModel : public QAbstractListModel
-{
-public:
-    explicit MatchesModel(QObject *parent = nullptr);
-
-    int rowCount(const QModelIndex &parent) const override;
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
-
-    const QVector<ProjectModel::Match> &matches() const { return mMatches; }
-    void setMatches(QVector<ProjectModel::Match> matches);
-
-private:
-    QVector<ProjectModel::Match> mMatches;
-};
-
-MatchesModel::MatchesModel(QObject *parent)
-    : QAbstractListModel(parent)
-{}
-
-int MatchesModel::rowCount(const QModelIndex &parent) const
-{
-    return parent.isValid() ? 0 : mMatches.size();
-}
-
-QVariant MatchesModel::data(const QModelIndex &index, int role) const
-{
-    switch (role) {
-    case Qt::DisplayRole: {
-        const ProjectModel::Match &match = mMatches.at(index.row());
-        return match.relativePath().toString();
-    }
-    }
-    return QVariant();
-}
-
-void MatchesModel::setMatches(QVector<ProjectModel::Match> matches)
-{
-    beginResetModel();
-    mMatches = std::move(matches);
-    endResetModel();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
 static QFont scaledFont(const QFont &font, qreal scale)
 {
     QFont scaled(font);
@@ -96,13 +58,13 @@ static QFont scaledFont(const QFont &font, qreal scale)
     return scaled;
 }
 
-class MatchDelegate : public QStyledItemDelegate
+class FileMatchDelegate : public QStyledItemDelegate
 {
 public:
-    MatchDelegate(QObject *parent = nullptr);
+    FileMatchDelegate(QObject *parent = nullptr);
 
     QSize sizeHint(const QStyleOptionViewItem &option,
-                  const QModelIndex &index) const override;
+                   const QModelIndex &index) const override;
 
     void paint(QPainter *painter,
                const QStyleOptionViewItem &option,
@@ -125,11 +87,12 @@ private:
     QStringList mWords;
 };
 
-MatchDelegate::MatchDelegate(QObject *parent)
+FileMatchDelegate::FileMatchDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
 {}
 
-QSize MatchDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &) const
+QSize FileMatchDelegate::sizeHint(const QStyleOptionViewItem &option,
+                                  const QModelIndex &) const
 {
     const QFont bigFont = scaledFont(option.font, 1.2);
     const QFontMetrics bigFontMetrics(bigFont);
@@ -138,19 +101,15 @@ QSize MatchDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIn
     return QSize(margin * 2, margin * 2 + bigFontMetrics.lineSpacing() * 2);
 }
 
-void MatchDelegate::paint(QPainter *painter,
-                          const QStyleOptionViewItem &option,
-                          const QModelIndex &index) const
+void FileMatchDelegate::paint(QPainter *painter,
+                              const QStyleOptionViewItem &option,
+                              const QModelIndex &index) const
 {
     painter->save();
 
     QString filePath = index.data().toString();
     const int lastSlash = filePath.lastIndexOf(QLatin1Char('/'));
-#if QT_VERSION < QT_VERSION_CHECK(6,0,0)
-    const auto ranges = Utils::matchingRanges(mWords, &filePath);
-#else
     const auto ranges = Utils::matchingRanges(mWords, filePath);
-#endif
 
     filePath = QDir::toNativeSeparators(filePath);
 
@@ -219,14 +178,11 @@ void MatchDelegate::paint(QPainter *painter,
     QStaticText staticText(fileNameHtml);
     staticText.setTextOption(textOption);
     staticText.setTextFormat(Qt::RichText);
-    staticText.setTextWidth(fileNameRect.width());
-    staticText.prepare(painter->transform(), fonts.big);
 
     painter->setFont(fonts.big);
     painter->drawStaticText(fileNameRect.topLeft(), staticText);
 
     staticText.setText(filePathHtml);
-    staticText.prepare(painter->transform(), fonts.small);
 
     painter->setOpacity(0.75);
     painter->setFont(fonts.small);
@@ -290,7 +246,7 @@ void ResultsView::updateMaximumHeight()
     setMaximumHeight(maximumHeight);
 }
 
-inline void ResultsView::keyPressEvent(QKeyEvent *event)
+void ResultsView::keyPressEvent(QKeyEvent *event)
 {
     // Make sure the Enter and Return keys activate the current index. This
     // doesn't happen otherwise on macOS.
@@ -307,24 +263,26 @@ inline void ResultsView::keyPressEvent(QKeyEvent *event)
 
 ///////////////////////////////////////////////////////////////////////////////
 
-LocatorWidget::LocatorWidget(QWidget *parent)
+LocatorWidget::LocatorWidget(LocatorSource *locatorSource,
+                             QWidget *parent)
     : QFrame(parent, Qt::Popup)
+    , mLocatorSource(locatorSource)
     , mFilterEdit(new FilterEdit(this))
     , mResultsView(new ResultsView(this))
-    , mListModel(new MatchesModel(this))
-    , mDelegate(new MatchDelegate(this))
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
 
+    mLocatorSource->setParent(this);        // take ownership of source
+
     mResultsView->setUniformRowHeights(true);
     mResultsView->setRootIsDecorated(false);
-    mResultsView->setItemDelegate(mDelegate);
+    mResultsView->setItemDelegate(mLocatorSource->delegate());
     mResultsView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    mResultsView->setModel(mListModel);
+    mResultsView->setModel(mLocatorSource);
     mResultsView->setHeaderHidden(true);
 
-    mFilterEdit->setPlaceholderText(tr("Filename"));
+    mFilterEdit->setPlaceholderText(mLocatorSource->placeholderText());
     mFilterEdit->setFilteredView(mResultsView);
     mFilterEdit->setClearTextOnEscape(false);
     mFilterEdit->setFont(scaledFont(mFilterEdit->font(), 1.5));
@@ -346,9 +304,8 @@ LocatorWidget::LocatorWidget(QWidget *parent)
 
     connect(mFilterEdit, &QLineEdit::textChanged, this, &LocatorWidget::setFilterText);
     connect(mResultsView, &QAbstractItemView::activated, this, [this] (const QModelIndex &index) {
-        const QString file = mListModel->matches().at(index.row()).path;
         close();
-        DocumentManager::instance()->openFile(file);
+        mLocatorSource->activate(index);
     });
 }
 
@@ -368,56 +325,175 @@ void LocatorWidget::setVisible(bool visible)
 
 void LocatorWidget::setFilterText(const QString &text)
 {
-    // TODO: Only consider previously selected when user explicitly selected it
-    // (rather than leaving at default selected first entry)
-    QString previousSelected;
-
-    const QModelIndex currentIndex = mResultsView->currentIndex();
-    if (currentIndex.isValid())
-        previousSelected = mListModel->data(currentIndex).toString();
-
     const QString normalized = QDir::fromNativeSeparators(text);
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-    const QStringList words = normalized.split(QLatin1Char(' '), QString::SkipEmptyParts);
-#else
     const QStringList words = normalized.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-#endif
 
-    auto projectModel = ProjectManager::instance()->projectModel();
-    auto matches = projectModel->findFiles(words);
-
-    std::stable_sort(matches.begin(), matches.end(), [] (const ProjectModel::Match &a, const ProjectModel::Match &b) {
-        // Sort based on score first
-        if (a.score != b.score)
-            return a.score > b.score;
-
-        // If score is the same, sort alphabetically
-        return a.relativePath().compare(b.relativePath(), Qt::CaseInsensitive) < 0;
-    });
-
-    mDelegate->setWords(words);
-    mListModel->setMatches(matches);
+    mLocatorSource->setFilterWords(words);
 
     mResultsView->updateGeometry();
     mResultsView->updateMaximumHeight();
 
     // Restore or introduce selection
-    if (!matches.isEmpty()) {
-        int row = 0;
-
-        if (!previousSelected.isEmpty()) {
-            auto it = std::find_if(matches.cbegin(), matches.cend(), [&] (const ProjectModel::Match &match) {
-                return match.relativePath() == previousSelected;
-            });
-            if (it != matches.cend())
-                row = std::distance(matches.cbegin(), it);
-        }
-
-        mResultsView->setCurrentIndex(mListModel->index(row));
-    }
+    if (auto index = mLocatorSource->index(0, 0); index.isValid())
+        mResultsView->setCurrentIndex(index);
 
     layout()->activate();
     resize(sizeHint());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+FileLocatorSource::FileLocatorSource(QObject *parent)
+    : LocatorSource(parent)
+    , mDelegate(new FileMatchDelegate(this))
+{}
+
+int FileLocatorSource::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : mMatches.size();
+}
+
+QVariant FileLocatorSource::data(const QModelIndex &index, int role) const
+{
+    switch (role) {
+    case Qt::DisplayRole: {
+        const ProjectModel::Match &match = mMatches.at(index.row());
+        return match.relativePath().toString();
+    }
+    }
+    return QVariant();
+}
+
+QAbstractItemDelegate *FileLocatorSource::delegate() const
+{
+    return mDelegate;
+}
+
+QString FileLocatorSource::placeholderText() const
+{
+    return QCoreApplication::translate("Tiled::LocatorWidget", "Filename");
+}
+
+void FileLocatorSource::activate(const QModelIndex &index)
+{
+    const QString file = mMatches.at(index.row()).path;
+    DocumentManager::instance()->openFile(file);
+}
+
+void FileLocatorSource::setFilterWords(const QStringList &words)
+{
+    auto projectModel = ProjectManager::instance()->projectModel();
+    auto matches = projectModel->findFiles(words);
+
+    QCollator collator;
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    collator.setNumericMode(Preferences::instance()->naturalSorting());
+
+    std::stable_sort(matches.begin(), matches.end(), [&] (const ProjectModel::Match &a, const ProjectModel::Match &b) {
+        // Sort based on score first
+        if (a.score != b.score)
+            return a.score > b.score;
+
+        // If score is the same, sort alphabetically
+        return collator.compare(a.relativePath(), b.relativePath()) < 0;
+    });
+
+    mDelegate->setWords(words);
+
+    beginResetModel();
+    mMatches = std::move(matches);
+    endResetModel();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+TileLocatorSource::TileLocatorSource(QObject *parent)
+    : LocatorSource(parent)
+    , mDelegate(new QStyledItemDelegate(this))
+{}
+
+int TileLocatorSource::rowCount(const QModelIndex &parent) const
+{
+    return (!parent.isValid() && mHasValidCoord) ? 1 : 0;
+}
+
+QVariant TileLocatorSource::data(const QModelIndex &index, int role) const
+{
+    if (role == Qt::DisplayRole && index.row() == 0 && mHasValidCoord)
+        return tr("Go to tile (%1, %2)").arg(mTileX).arg(mTileY);
+    return QVariant();
+}
+
+QAbstractItemDelegate *TileLocatorSource::delegate() const
+{
+    return mDelegate;
+}
+
+QString TileLocatorSource::placeholderText() const
+{
+    return tr("Go to tile: x, y");
+}
+
+void TileLocatorSource::setFilterWords(const QStringList &words)
+{
+    bool validX = false;
+    bool validY = false;
+    int x = 0;
+    int y = 0;
+
+    const QString input = words.join(QStringView());
+    const int commaIndex = input.indexOf(QLatin1Char(','));
+    if (commaIndex >= 0 && commaIndex < input.size() - 1) {
+        x = QStringView(input).left(commaIndex).toInt(&validX);
+        y = QStringView(input).mid(commaIndex + 1).toInt(&validY);
+    }
+
+    if (!(validX && validY) && words.size() == 2) {
+        x = words.at(0).toInt(&validX);
+        y = words.at(1).toInt(&validY);
+    }
+
+    beginResetModel();
+    mHasValidCoord = validX && validY;
+    mTileX = x;
+    mTileY = y;
+    endResetModel();
+}
+
+void TileLocatorSource::activate(const QModelIndex &)
+{
+    auto documentManager = DocumentManager::instance();
+    auto mapDocument = qobject_cast<MapDocument*>(documentManager->currentDocument());
+    if (!mapDocument)
+        return;
+
+    const auto *map = mapDocument->map();
+    if (map->width() < 1 || map->height() < 1)
+        return;
+
+    auto mapView = documentManager->currentMapView();
+    if (!mapView)
+        return;
+
+    const int x = qBound(0, mTileX, map->width() - 1);
+    const int y = qBound(0, mTileY, map->height() - 1);
+
+    auto renderer = mapDocument->renderer();
+    QPointF pixelPos = renderer->tileToPixelCoords(x + 0.5, y + 0.5);
+
+    if (Layer *layer = mapDocument->currentLayer()) {
+        mapView->forceCenterOn(pixelPos, *layer);
+
+        if (auto mapScene = mapView->mapScene()) {
+            if (MapItem *mapItem = mapScene->mapItem(mapDocument)) {
+                auto *highlight = new TileHighlightItem(mapDocument, x, y, mapItem);
+                highlight->setZValue(10003);
+                highlight->startBlink();
+            }
+        }
+    } else {
+        mapView->forceCenterOn(pixelPos);
+    }
 }
 
 } // namespace Tiled

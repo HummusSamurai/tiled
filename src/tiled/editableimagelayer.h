@@ -33,6 +33,10 @@ class EditableImageLayer : public EditableLayer
 
     Q_PROPERTY(QColor transparentColor READ transparentColor WRITE setTransparentColor)
     Q_PROPERTY(QUrl imageSource READ imageSource WRITE setImageSource)
+    Q_PROPERTY(QString imageFileName READ imageFileName WRITE setImageFileName)
+    Q_PROPERTY(Tiled::ScriptImage *image READ image WRITE setImage)
+    Q_PROPERTY(bool repeatX READ repeatX WRITE setRepeatX)
+    Q_PROPERTY(bool repeatY READ repeatY WRITE setRepeatY)
 
 public:
     Q_INVOKABLE explicit EditableImageLayer(const QString &name = QString(),
@@ -44,15 +48,21 @@ public:
 
     const QColor &transparentColor() const;
     const QUrl &imageSource() const;
+    QString imageFileName() const;
+    ScriptImage *image() const;
+    bool repeatX() const;
+    bool repeatY() const;
 
     void setTransparentColor(const QColor &transparentColor);
     void setImageSource(const QUrl &imageSource);
+    void setImageFileName(const QString &fileName);
+    void setRepeatX(bool repeatX);
+    void setRepeatY(bool repeatY);
 
     Q_INVOKABLE void setImage(Tiled::ScriptImage *image, const QUrl &source = QUrl());
 
 private:
     ImageLayer *imageLayer() const;
-
 };
 
 inline const QColor &EditableImageLayer::transparentColor() const
@@ -63,6 +73,21 @@ inline const QColor &EditableImageLayer::transparentColor() const
 inline const QUrl &EditableImageLayer::imageSource() const
 {
     return imageLayer()->imageSource();
+}
+
+inline QString EditableImageLayer::imageFileName() const
+{
+    return imageLayer()->imageSource().toString(QUrl::PreferLocalFile);
+}
+
+inline bool EditableImageLayer::repeatX() const
+{
+    return imageLayer()->repeatX();
+}
+
+inline bool EditableImageLayer::repeatY() const
+{
+    return imageLayer()->repeatY();
 }
 
 inline ImageLayer *EditableImageLayer::imageLayer() const

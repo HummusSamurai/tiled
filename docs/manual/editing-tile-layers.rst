@@ -110,7 +110,16 @@ Shape Fill Tool
 Shortcut: ``P`` |rectangle-fill|
 
 This tool provides a quick way to fill rectangles or ellipses with a certain
-tile or pattern. Hold ``Shift`` to fill an exact square or circle.
+tile or pattern.
+
+- Holding ``Shift`` fills an exact square or circle.
+
+.. raw:: html
+
+   <div class="new new-prev">Since Tiled 1.10.2</div>
+
+- Holding ``Alt`` draws the rectangle or ellipse centered around the starting
+  location.
 
 You can also flip and rotate the current stamp as described for the
 :ref:`stamp-tool`.
@@ -127,7 +136,7 @@ be used to quickly erase rectangular areas.
 
 .. raw:: html
 
-   <div class="new">New in Tiled 1.5</div>
+   <div class="new new-prev">Since Tiled 1.5</div>
 
 -  Holding ``Shift`` erases on all layers.
 
@@ -147,16 +156,26 @@ There are various tile selection tools that all work in similar fashion:
 -  |stock-tool-by-color-select| **Select Same Tile** allows selection of
    same-tiles across the entire layer (shortcut: ``S``)
 
-By default, each of these tools replaces the currently selected area.
-The following modifiers can be used to change this behavior:
+By default, each of these tools replaces the currently selected area. The
+following modifiers can be used to change the selection mode before starting
+the selection:
 
--  Holding ``Shift`` expands the current selection with the new area
--  Holding ``Ctrl`` subtracts the new area from the current selection
--  Holding ``Ctrl`` and ``Shift`` selects the intersection of the new
+-  Hold ``Shift`` to expand the current selection with the new area
+-  Hold ``Ctrl`` to subtract the new area from the current selection
+-  Hold ``Ctrl`` and ``Shift`` to select the intersection of the new
    area with the current selection
 
 You can also lock into one of these modes (Add, Subtract or Intersect)
 by clicking on one of the tool buttons in the Tool Options toolbar.
+
+.. raw:: html
+
+   <div class="new">New in Tiled 1.12</div>
+
+While selecting an area, the following modifiers can be used:
+
+- Hold ``Shift`` to constrain the selection to a square.
+- Hold ``Ctrl`` to expand the selection from the starting location.
 
 Managing Tile Stamps
 --------------------
@@ -164,19 +183,21 @@ Managing Tile Stamps
 It can often be useful to store the current tile stamp somewhere to use
 it again later. The following shortcuts work for this purpose:
 
--  ``Ctrl + 1-9`` - Store current tile stamp (similar to ``Ctrl + C``)
+-  ``Ctrl + 1-9`` - Store current tile stamp. When no tile drawing tool is
+   selected, tries to capture the current tile selection (similar to
+   ``Ctrl + C``).
 -  ``1-9`` - Recall the stamp stored at this location (similar to
    ``Ctrl + V``)
 
 Tile stamps can also be stored by name and extended with variations
 using the *Tile Stamps* view.
 
-.. |rectangle-fill| image:: ../../src/tiled/images/22/rectangle-fill.png
-.. |stock-tool-bucket-fill| image:: ../../src/tiled/images/22/stock-tool-bucket-fill.png
-.. |stock-tool-clone| image:: ../../src/tiled/images/22/stock-tool-clone.png
-.. |stock-tool-eraser| image:: ../../src/tiled/images/22/stock-tool-eraser.png
-.. |stock-tool-rect-select| image:: ../../src/tiled/images/22/stock-tool-rect-select.png
-.. |stock-tool-by-color-select| image:: ../../src/tiled/images/22/stock-tool-by-color-select.png
-.. |stock-tool-fuzzy-select-22| image:: ../../src/tiled/images/22/stock-tool-fuzzy-select-22.png
-.. |terrain-edit| image:: ../../src/tiled/images/24/terrain-edit.png
-.. |terrain| image:: ../../src/tiled/images/24/terrain.png
+.. |rectangle-fill| image:: ../../src/tiled/resources/images/22/rectangle-fill.png
+.. |stock-tool-bucket-fill| image:: ../../src/tiled/resources/images/22/stock-tool-bucket-fill.png
+.. |stock-tool-clone| image:: ../../src/tiled/resources/images/22/stock-tool-clone.png
+.. |stock-tool-eraser| image:: ../../src/tiled/resources/images/22/stock-tool-eraser.png
+.. |stock-tool-rect-select| image:: ../../src/tiled/resources/images/22/stock-tool-rect-select.png
+.. |stock-tool-by-color-select| image:: ../../src/tiled/resources/images/22/stock-tool-by-color-select.png
+.. |stock-tool-fuzzy-select-22| image:: ../../src/tiled/resources/images/22/stock-tool-fuzzy-select-22.png
+.. |terrain-edit| image:: ../../src/tiled/resources/images/24/terrain-edit.png
+.. |terrain| image:: ../../src/tiled/resources/images/24/terrain.png

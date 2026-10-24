@@ -1,6 +1,6 @@
 /*
  * tiled.h
- * Copyright 2013, Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright 2013-2022, Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
  *
  * This file is part of libtiled.
  *
@@ -31,12 +31,12 @@
 #include "tiled_global.h"
 
 #include <QColor>
+#include <QDir>
 #include <QMetaType>
+#include <QPainter>
 #include <QRectF>
 #include <QString>
 #include <QUrl>
-
-class QDir;
 
 namespace Tiled {
 
@@ -70,6 +70,34 @@ enum LoadingStatus {
     LoadingError
 };
 
+enum CompatibilityVersion {
+    UnknownVersion  = 0,
+    Tiled_1_8       = 1080,
+    Tiled_1_9       = 1090,
+    Tiled_1_10      = 1100,
+    Tiled_Current   = Tiled_1_10,
+    Tiled_Latest    = 65535,
+};
+
+// All values can be casted to QPainter::CompositionMode
+enum class BlendMode {
+    Normal      = QPainter::CompositionMode_SourceOver,
+
+    // For now we only support the SVG 1.2 blend modes
+    Add         = QPainter::CompositionMode_Plus,
+    Multiply    = QPainter::CompositionMode_Multiply,
+    Screen      = QPainter::CompositionMode_Screen,
+    Overlay     = QPainter::CompositionMode_Overlay,
+    Darken      = QPainter::CompositionMode_Darken,
+    Lighten     = QPainter::CompositionMode_Lighten,
+    ColorDodge  = QPainter::CompositionMode_ColorDodge,
+    ColorBurn   = QPainter::CompositionMode_ColorBurn,
+    HardLight   = QPainter::CompositionMode_HardLight,
+    SoftLight   = QPainter::CompositionMode_SoftLight,
+    Difference  = QPainter::CompositionMode_Difference,
+    Exclusion   = QPainter::CompositionMode_Exclusion,
+};
+
 const int CHUNK_SIZE = 16;
 const int CHUNK_BITS = 4;
 const int CHUNK_SIZE_MIN = 4;
@@ -79,13 +107,24 @@ static const char TILES_MIMETYPE[] = "application/vnd.tile.list";
 static const char FRAMES_MIMETYPE[] = "application/vnd.frame.list";
 static const char LAYERS_MIMETYPE[] = "application/vnd.layer.list";
 static const char PROPERTIES_MIMETYPE[] = "application/vnd.properties.list";
+static const char LIST_VALUES_MIMETYPE[] = "application/vnd.list-values.list";
 
-TILEDSHARED_EXPORT QPointF alignmentOffset(const QRectF &r, Alignment alignment);
+TILEDSHARED_EXPORT QPointF alignmentOffset(const QSizeF &size, Alignment alignment);
+TILEDSHARED_EXPORT Alignment flipAlignment(Alignment alignment, FlipDirection direction);
 
-TILEDSHARED_EXPORT QString toFileReference(const QUrl &url, const QDir &dir);
-TILEDSHARED_EXPORT QUrl toUrl(const QString &filePathOrUrl, const QDir &dir);
-TILEDSHARED_EXPORT QUrl toUrl(const QString &filePathOrUrl);
+inline QPointF alignmentOffset(const QRectF &r, Alignment alignment)
+{ return alignmentOffset(r.size(), alignment); }
+
+TILEDSHARED_EXPORT QString toFileReference(const QUrl &url, const QString &path = QString());
+TILEDSHARED_EXPORT QUrl toUrl(const QString &filePathOrUrl, const QString &path = QString());
 TILEDSHARED_EXPORT QString urlToLocalFileOrQrc(const QUrl &url);
+TILEDSHARED_EXPORT QString filePathRelativeTo(const QDir &dir, const QString &filePath);
+
+inline QString toFileReference(const QUrl &url, const QDir &dir)
+{ return toFileReference(url, dir.path()); }
+
+inline QUrl toUrl(const QString &filePathOrUrl, const QDir &dir)
+{ return toUrl(filePathOrUrl, dir.path()); }
 
 inline QString colorToString(const QColor &color)
 {
@@ -94,21 +133,15 @@ inline QString colorToString(const QColor &color)
     return color.name();
 }
 
-inline QMargins maxMargins(const QMargins &a,
-                           const QMargins &b)
-{
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    return QMargins(qMax(a.left(), b.left()),
-                    qMax(a.top(), b.top()),
-                    qMax(a.right(), b.right()),
-                    qMax(a.bottom(), b.bottom()));
-#else
-    return a | b;
-#endif
-}
-
 TILEDSHARED_EXPORT QString alignmentToString(Alignment);
 TILEDSHARED_EXPORT Alignment alignmentFromString(const QString &);
+
+TILEDSHARED_EXPORT CompatibilityVersion versionFromString(const QString &);
+
+TILEDSHARED_EXPORT void increaseImageAllocationLimit(int mbLimit = 4096);
+
+TILEDSHARED_EXPORT QString blendModeToString(BlendMode);
+TILEDSHARED_EXPORT BlendMode blendModeFromString(const QString &);
 
 } // namespace Tiled
 

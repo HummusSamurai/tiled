@@ -83,6 +83,8 @@ cls_properties.add_method('keys', 'QList<QString>', [])
 #cls_propsc = tiled.add_container('QMap<QString,QString>', ('QString','QString'), 'map', cls_properties)
 
 cls_object = tiled.add_class('Object')
+cls_object.add_method('className', 'QString', [])
+cls_object.add_method('setClassName', None, [('QString','n')])
 cls_object.add_method('properties', retval('Tiled::Properties','p'), [])
 cls_object.add_method('propertyAsString', 'QString', [('QString','prop')])
 cls_object.add_method('setProperty', None,
@@ -256,7 +258,7 @@ cls_mapobject = tiled.add_class('MapObject', cls_object)
 cls_mapobject.add_constructor([])
 cls_mapobject.add_constructor([('QString','name'), ('QString','type'),
     ('QPointF','pos'), ('QSizeF','size') ])
-cls_mapobject.add_enum('Shape', ('Rectangle','Polygon','Polyline','Ellipse','Text','Point'))
+cls_mapobject.add_enum('Shape', ('Rectangle','Polygon','Polyline','Ellipse','Capsule','Text','Point'))
 cls_mapobject.add_method('setPosition', None, [('QPointF','pos')])
 cls_mapobject.add_method('x', 'double', [])
 cls_mapobject.add_method('setX', None, [('double','x')])
@@ -278,6 +280,8 @@ cls_mapobject.add_method('cell', retval('const Tiled::Cell'), [])
 cls_mapobject.add_method('objectGroup', retval('Tiled::ObjectGroup*',reference_existing_object=True), [])
 cls_mapobject.add_method('rotation', 'double', [])
 cls_mapobject.add_method('setRotation', None, [('double','r')])
+cls_mapobject.add_method('opacity', 'double', [])
+cls_mapobject.add_method('setOpacity', None, [('double','opacity')])
 cls_mapobject.add_method('isVisible', 'bool', [])
 cls_mapobject.add_method('setVisible', None, [('bool','v')])
 cls_mapobject.add_method('name', 'QString', [])
@@ -323,6 +327,8 @@ cls_layer.add_method('setX', None, [('int','x')])
 cls_layer.add_method('y', 'int', [])
 cls_layer.add_method('setY', None, [('int','y')])
 cls_layer.add_method('setPosition', None, [('int','x'),('int','y')])
+cls_layer.add_method('offset', 'QPointF', [])
+cls_layer.add_method('setOffset', None, [('QPointF','offset')])
 cls_layer.add_method('isTileLayer', 'bool', [])
 cls_layer.add_method('isObjectGroup', 'bool', [])
 cls_layer.add_method('isImageLayer', 'bool', [])
@@ -394,13 +400,22 @@ static Tiled::SharedTileset loadTileset(const QString &file)
 """)
 
 """
- C++ class PythonScript is seen as Tiled.Plugin from Python script
+ C++ class PythonScript is seen as tiled.Plugin from Python script
  (naming describes the opposite side from either perspective)
 """
 cls_pp = mod.add_class('PythonScript',
     allow_subclassing=True,
     foreign_cpp_namespace='Python',
     custom_name='Plugin')
+
+"""
+ C++ class PythonTilesetScript is seen as tiled.TilesetPlugin from 
+ Python script (naming describes the opposite side from either perspective)
+"""
+cls_ptp = mod.add_class('PythonTilesetScript',
+    allow_subclassing=True,
+    foreign_cpp_namespace='Python',
+    custom_name='TilesetPlugin')
 
 """
  PythonPlugin implements LoggingInterface for messaging to Tiled
@@ -448,6 +463,37 @@ int _wrap_convert_py2c__Tiled__Map___star__(PyObject *value, Tiled::Map * *addre
     *address = tmp_Map->obj->clone().release();
     Py_DECREF(py_retval);
     return 1;
+}
+
+int _wrap_convert_py2c__Tiled__SharedTileset___star__(PyObject *value, Tiled::SharedTileset * *address)
+{
+    PyObject *py_retval;
+    PyTiledSharedTileset *tmp_SharedTileset;
+
+    py_retval = Py_BuildValue((char *) "(O)", value);
+    if (!PyArg_ParseTuple(py_retval, (char *) "O!", &PyTiledSharedTileset_Type, &tmp_SharedTileset)) {
+        Py_DECREF(py_retval);
+        return 0;
+    }
+    *address = new Tiled::SharedTileset(*tmp_SharedTileset->obj);
+    Py_DECREF(py_retval);
+    return 1;
+}
+
+PyObject* _wrap_convert_c2py__Tiled__Tileset_const(Tiled::Tileset const *cvalue)
+{
+    PyObject *py_retval;
+    PyTiledTileset *py_Tileset;
+    
+    if (!cvalue) {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    py_Tileset = PyObject_New(PyTiledTileset, &PyTiledTileset_Type);
+    py_Tileset->obj = (Tiled::Tileset *) cvalue;
+    py_Tileset->flags = PYBINDGEN_WRAPPER_FLAG_OBJECT_NOT_OWNED;
+    py_retval = Py_BuildValue((char *) "N", py_Tileset);
+    return py_retval;
 }
 """, file=fh)
     #mod.generate_c_to_python_type_converter(

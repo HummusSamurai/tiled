@@ -79,14 +79,15 @@ public:
 
     MapDocument *mapDocument() const;
     void setMapDocument(MapDocument *mapDocument);
+    void languageChanged();
 
     void insertLayer(GroupLayer *parentLayer, int index, Layer *layer);
     Layer *takeLayerAt(GroupLayer *parentLayer, int index);
     void replaceLayer(Layer *layer, Layer *replacement);
     void moveLayer(GroupLayer *parentLayer, int index, GroupLayer *toParentLayer, int toIndex);
 
-    void toggleLayers(const QList<Layer *> &layers);
-    void toggleLockLayers(const QList<Layer *> &layers);
+    void toggleLayers(QList<Layer *> layers);
+    void toggleLockLayers(QList<Layer *> layers);
     void toggleOtherLayers(const QList<Layer *> &layers);
     void toggleLockOtherLayers(const QList<Layer *> &layers);
 
@@ -98,8 +99,9 @@ signals:
 private:
     void documentChanged(const ChangeEvent &change);
 
-    MapDocument *mMapDocument;
-    Map *mMap;
+    Map *map() const;
+
+    MapDocument *mMapDocument = nullptr;
 
     QIcon mTileLayerIcon;
     QIcon mObjectGroupIcon;

@@ -28,8 +28,6 @@
 
 #include <QCoreApplication>
 
-#include "qtcompat_p.h"
-
 using namespace Tiled;
 
 RenameWangSet::RenameWangSet(TilesetDocument *tilesetDocument,
@@ -52,6 +50,16 @@ void RenameWangSet::undo()
 void RenameWangSet::redo()
 {
     mTilesetDocument->wangSetModel()->setWangSetName(mWangSet, mNewName);
+}
+
+bool RenameWangSet::mergeWith(const QUndoCommand *other)
+{
+    auto o = static_cast<const RenameWangSet*>(other);
+    if (mWangSet != o->mWangSet)
+        return false;
+
+    mNewName = o->mNewName;
+    return true;
 }
 
 
@@ -110,7 +118,7 @@ void ChangeWangSetColorCount::undo()
 {
     mTilesetDocument->wangSetModel()->setWangSetColorCount(mWangSet, mOldValue);
 
-    for (const WangColorChange &w : qAsConst(mRemovedWangColors)) {
+    for (const WangColorChange &w : std::as_const(mRemovedWangColors)) {
         WangColor &wangColor = *mWangSet->colorAt(w.index);
         wangColor.setName(w.wangColor->name());
         wangColor.setImageId(w.wangColor->imageId());
@@ -136,8 +144,6 @@ RemoveWangSetColor::RemoveWangSetColor(TilesetDocument *tilesetDocumnet, WangSet
     , mWangSet(wangSet)
     , mColor(color)
 {
-    mRemovedWangColor = wangSet->colorAt(mColor);
-
     const auto changes = ChangeTileWangId::changesOnRemoveColor(wangSet, color);
     if (!changes.isEmpty())
         new ChangeTileWangId(mTilesetDocument, wangSet, changes, this);
@@ -145,15 +151,13 @@ RemoveWangSetColor::RemoveWangSetColor(TilesetDocument *tilesetDocumnet, WangSet
 
 void RemoveWangSetColor::undo()
 {
-    mTilesetDocument->wangSetModel()->insertWangColor(mWangSet, mRemovedWangColor);
-
+    mTilesetDocument->wangSetModel()->insertWangColor(mWangSet, std::move(mRemovedWangColor));
     QUndoCommand::undo();
 }
 
 void RemoveWangSetColor::redo()
 {
-    mTilesetDocument->wangSetModel()->removeWangColorAt(mWangSet, mColor);
-
+    mRemovedWangColor = mTilesetDocument->wangSetModel()->takeWangColorAt(mWangSet, mColor);
     QUndoCommand::redo();
 }
 

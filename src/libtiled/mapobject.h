@@ -63,6 +63,17 @@ struct TILEDSHARED_EXPORT TextData
     QSizeF textSize() const;
 };
 
+struct MapObjectColors
+{
+    QColor main;
+    QColor fill;
+
+    bool operator!=(const MapObjectColors &other) const
+    {
+        return main != other.main || fill != other.fill;
+    }
+};
+
 /**
  * An object on a map. Objects are positioned and scaled using floating point
  * values, ensuring they are not limited to the tile grid. They are suitable
@@ -80,7 +91,7 @@ public:
      * When a polygon is set, the shape determines whether it should be
      * interpreted as a filled polygon or a line.
      *
-     * Text objects contain arbitrary text, contained withih their rectangle
+     * Text objects contain arbitrary text, contained within their rectangle
      * (in screen coordinates).
      */
     enum Shape {
@@ -88,6 +99,7 @@ public:
         Polygon,
         Polyline,
         Ellipse,
+        Capsule,
         Text,
         Point,
     };
@@ -97,16 +109,16 @@ public:
      */
     enum Property {
         NameProperty            = 1 << 0,
-        TypeProperty            = 1 << 1,
-        VisibleProperty         = 1 << 2,
-        TextProperty            = 1 << 3,
-        TextFontProperty        = 1 << 4,
-        TextAlignmentProperty   = 1 << 5,
-        TextWordWrapProperty    = 1 << 6,
-        TextColorProperty       = 1 << 7,
-        PositionProperty        = 1 << 8,
-        SizeProperty            = 1 << 9,
-        RotationProperty        = 1 << 10,
+        VisibleProperty         = 1 << 1,
+        TextProperty            = 1 << 2,
+        TextFontProperty        = 1 << 3,
+        TextAlignmentProperty   = 1 << 4,
+        TextWordWrapProperty    = 1 << 5,
+        TextColorProperty       = 1 << 6,
+        PositionProperty        = 1 << 7,
+        SizeProperty            = 1 << 8,
+        RotationProperty        = 1 << 9,
+        OpacityProperty         = 1 << 10,
         CellProperty            = 1 << 11,
         ShapeProperty           = 1 << 12,
         TemplateProperty        = 1 << 13,
@@ -117,7 +129,7 @@ public:
     Q_DECLARE_FLAGS(ChangedProperties, Property)
 
     explicit MapObject(const QString &name = QString(),
-                       const QString &type = QString(),
+                       const QString &className = QString(),
                        const QPointF &pos = QPointF(),
                        const QSizeF &size = QSizeF(0, 0));
 
@@ -130,10 +142,12 @@ public:
     const QString &name() const;
     void setName(const QString &name);
 
-    const QString &type() const;
-    void setType(const QString &type);
+    const QString &effectiveClassName() const;
 
-    const QString &effectiveType() const;
+    // For Python API compatibility
+    const QString &type() const { return className(); }
+    void setType(const QString &type) { setClassName(type); }
+    const QString &effectiveType() const { return effectiveClassName(); }
 
     const QPointF &position() const;
     void setPosition(const QPointF &pos);
@@ -172,6 +186,7 @@ public:
     QRectF bounds() const;
     QRectF boundsUseTile() const;
     QRectF screenBounds(const MapRenderer &renderer) const;
+    QPainterPath tileObjectShape(const Map *map = nullptr) const;
 
     const Cell &cell() const;
     void setCell(const Cell &cell);
@@ -187,12 +202,16 @@ public:
     qreal rotation() const;
     void setRotation(qreal rotation);
 
+    qreal opacity() const;
+    void setOpacity(qreal opacity);
+
     Alignment alignment(const Map *map = nullptr) const;
 
     bool isVisible() const;
     void setVisible(bool visible);
 
     QColor effectiveColor() const;
+    MapObjectColors effectiveColors() const;
 
     QVariant mapObjectProperty(Property property) const;
     void setMapObjectProperty(Property property, const QVariant &value);
@@ -219,24 +238,23 @@ public:
     void markAsTemplateBase();
 
 private:
-    void flipRectObject(const QTransform &flipTransform);
-    void flipPolygonObject(const QTransform &flipTransform);
-    void flipTileObject(const QTransform &flipTransform);
+    void flipInScreenCoordinates(FlipDirection direction, const QPointF &screenOrigin);
+    void flipInPixelCoordinates(FlipDirection direction, const QPointF &pixelOrigin);
 
-    int mId;
-    Shape mShape;
+    int mId = 0;
+    Shape mShape = Rectangle;
     QString mName;
-    QString mType;
     QPointF mPos;
     QSizeF mSize;
     TextData mTextData;
     QPolygonF mPolygon;
     Cell mCell;
-    const ObjectTemplate *mObjectTemplate;
-    ObjectGroup *mObjectGroup;
-    qreal mRotation;
-    bool mVisible;
-    bool mTemplateBase;
+    const ObjectTemplate *mObjectTemplate = nullptr;
+    ObjectGroup *mObjectGroup = nullptr;
+    qreal mRotation = 0.0;
+    qreal mOpacity = 1.0;
+    bool mVisible = true;
+    bool mTemplateBase = false;
     ChangedProperties mChangedProperties;
 };
 
@@ -272,19 +290,6 @@ inline const QString &MapObject::name() const
  */
 inline void MapObject::setName(const QString &name)
 { mName = name; }
-
-/**
- * Returns the type of this object. The type usually says something about
- * how the object is meant to be interpreted by the engine.
- */
-inline const QString &MapObject::type() const
-{ return mType; }
-
-/**
- * Sets the type of this object.
- */
-inline void MapObject::setType(const QString &type)
-{ mType = type; }
 
 /**
  * Returns the position of this object.
@@ -480,11 +485,26 @@ inline qreal MapObject::rotation() const
 inline void MapObject::setRotation(qreal rotation)
 { mRotation = rotation; }
 
+/**
+ * Returns the opacity of the object.
+ */
+inline qreal MapObject::opacity() const
+{ return mOpacity; }
+
+/**
+ * Sets the opacity of the object.
+ */
+inline void MapObject::setOpacity(qreal opacity)
+{ mOpacity = opacity; }
+
 inline bool MapObject::isVisible() const
 { return mVisible; }
 
 inline void MapObject::setVisible(bool visible)
 { mVisible = visible; }
+
+inline QColor MapObject::effectiveColor() const
+{ return effectiveColors().main; }
 
 inline void MapObject::setChangedProperties(ChangedProperties changedProperties)
 { mChangedProperties = changedProperties; }
@@ -494,14 +514,7 @@ inline MapObject::ChangedProperties MapObject::changedProperties() const
 
 inline void MapObject::setPropertyChanged(Property property, bool state)
 {
-#if QT_VERSION >= 0x050700
     mChangedProperties.setFlag(property, state);
-#else
-    if (state)
-        mChangedProperties |= property;
-    else
-        mChangedProperties &= ~property;
-#endif
 }
 
 inline bool MapObject::propertyChanged(Property property) const

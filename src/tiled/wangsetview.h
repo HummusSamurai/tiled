@@ -41,6 +41,7 @@ public:
     Zoomable *zoomable() const { return mZoomable; }
 
     WangSet *wangSetAt(const QModelIndex &index) const;
+    TilesetDocument *tilesetDocumentAt(const QModelIndex &index) const;
 
 protected:
     bool event(QEvent *event) override;
@@ -57,5 +58,3 @@ private:
 };
 
 } // namespace Tiled
-
-Q_DECLARE_METATYPE(Tiled::WangSetView *)

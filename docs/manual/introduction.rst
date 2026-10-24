@@ -11,8 +11,8 @@ your level with extra information used by the game. Tiled focuses on
 general flexibility while trying to stay intuitive.**
 
 In terms of tile maps, it supports straight rectangular tile layers, but
-also projected isometric, staggered isometric and staggered hexagonal
-layers. A tileset can be either a single image containing many tiles, or
+also projected isometric, staggered isometric, staggered hexagonal and
+oblique layers. A tileset can be either a single image containing many tiles, or
 it can be a collection of individual images. In order to support certain
 depth faking techniques, tiles and layers can be offset by a custom
 distance and their rendering order can be configured.
@@ -33,7 +33,7 @@ rotated. Object layers offer a lot of flexibility to add almost any
 information to your level that your game needs.
 
 Other things worth mentioning are the support for adding custom map or tileset
-formats through plugins, :doc:`extending Tiled </reference/scripting>` with
+formats through plugins, :doc:`extending Tiled </manual/scripting>` with
 JavaScript, the tile stamp memory, :ref:`tile animation support
 <tile-animation-editor>` and the :ref:`tile collision editor
 <tile-collision-editor>`.
@@ -60,18 +60,25 @@ following window:
 
 To make all our assets readily accessible from the :guilabel:`Project` view,
 as well as to be able to quickly switch between multiple projects, it is
-recommended to first set up a Tiled project. This is however an entirely
-optional step that can be skipped when desired.
+recommended to first set up a :doc:`Tiled project <projects>`. This is however
+an entirely optional step that can be skipped when desired.
 
-Choose *Project -> Save Project As...* to save a new project file. The
-recommended location is the root of your project, but you can place it
-anywhere you want.
+Choose *File -> New -> New Project...* to create a new project file. It is
+recommended to save this file in the root of your project. The directory in
+which you store the project will be automatically added, so that its files are
+visible in the Project view.
 
-Next, we'll add at least one folder, either some "assets" folder or simply the
-root of your project, but you can also choose to add several top-level folders
-like "tilesets", "maps", "templates", etc. Right-click in the Project view and
-choose *Add Folder to Project...* to add the relevant folders.
+When necessary, you can add additional folders to the project or replace the
+one added by default. For example, you could choose to add several top-level
+folders like "tilesets", "maps", "templates", etc. Right-click in the
+Project view and choose *Add Folder to Project...* to add the
+relevant folders.
 
+.. hint::
+
+   You can press ``Ctrl+Shift+P`` to open the action search widget,
+   which can provide a faster way to get to actions than looking for them in
+   the menus!
 
 Creating a New Map
 ~~~~~~~~~~~~~~~~~~
@@ -86,10 +93,11 @@ following dialog will pop up:
    New Map
 
 Here, we choose the initial map size, tile size, orientation, tile layer
-format, tile render order (only supported for *Orthogonal* maps) and whether
-the map is :doc:`infinite <using-infinite-maps>` or not. All of these things
-can be changed later as needed, so it's not important to get it all right the
-first time.
+format, tile render order (only supported for *Orthogonal* and *Oblique* maps)
+and whether the map is :doc:`infinite <using-infinite-maps>` or not. For more
+details on map orientations and related options, see :doc:`maps <maps>`. All of
+these things can be changed later as needed, so it's not important to get it
+all right the first time.
 
 .. note::
 

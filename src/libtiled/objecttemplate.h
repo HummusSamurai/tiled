@@ -38,7 +38,7 @@
 
 namespace Tiled {
 
-class TILEDSHARED_EXPORT ObjectTemplate : public Object
+class TILEDSHARED_EXPORT ObjectTemplate
 {
 public:
     ObjectTemplate();

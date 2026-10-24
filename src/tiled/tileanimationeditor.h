@@ -23,6 +23,8 @@
 #include <QDialog>
 #include <QModelIndex>
 
+class QAbstractItemView;
+
 namespace Ui {
 class TileAnimationEditor;
 }
@@ -43,7 +45,7 @@ class TileAnimationEditor : public QDialog
 
 public:
     explicit TileAnimationEditor(QWidget *parent = nullptr);
-    ~TileAnimationEditor();
+    ~TileAnimationEditor() override;
 
     void setTilesetDocument(TilesetDocument *tilesetDocument);
 
@@ -62,8 +64,12 @@ protected:
 
 private:
     void framesEdited();
+    void tilesetChanged();
+    void tilesetImagesChanged(Tileset *tileset);
     void tileAnimationChanged(Tile *tile);
     void currentObjectChanged(Object *object);
+
+    void showFrameListContextMenu(const QPoint &pos);
 
     void addFrameForTileAt(const QModelIndex &index);
 
@@ -71,7 +77,13 @@ private:
     void setDefaultFrameTime(int duration);
     void undo();
     void redo();
-    void delete_();
+
+    void cutFrames();
+    void copyFrames();
+    void copyTiles();
+    void copy(QAbstractItemView *view);
+    void pasteFrames();
+    void deleteFrames();
 
     void advancePreviewAnimation(int ms);
     void resetPreview();
@@ -79,15 +91,15 @@ private:
 
     Ui::TileAnimationEditor *mUi;
 
-    TilesetDocument *mTilesetDocument;
-    Tile *mTile;
+    TilesetDocument *mTilesetDocument = nullptr;
+    Tile *mTile = nullptr;
     FrameListModel *mFrameListModel;
-    bool mApplyingChanges;
-    bool mSuppressUndo;
+    bool mApplyingChanges = false;
+    bool mSuppressUndo = false;
 
     TileAnimationDriver *mPreviewAnimationDriver;
-    int mPreviewFrameIndex;
-    int mPreviewUnusedTime;
+    int mPreviewFrameIndex = 0;
+    int mPreviewUnusedTime = 0;
 };
 
 } // namespace Tiled

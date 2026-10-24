@@ -20,8 +20,7 @@
 
 #pragma once
 
-#include "properties.h"
-#include "variantpropertymanager.h"
+#include "objectrefdialog.h"
 
 #include <QWidget>
 
@@ -45,9 +44,11 @@ signals:
     void valueChanged(const DisplayObjectRef &value);
 
 protected:
+    void changeEvent(QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
 private:
+    void retranslateUi();
     void openObjectRefDialog();
     void pickObjectOnMap(bool pick);
 

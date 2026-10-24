@@ -21,14 +21,11 @@
 #include "tilestamp.h"
 
 #include "maptovariantconverter.h"
-#include "randompicker.h"
 #include "tilelayer.h"
 #include "varianttomapconverter.h"
 
 #include <QDebug>
 #include <QJsonArray>
-
-#include <qtcompat_p.h>
 
 namespace Tiled {
 
@@ -63,7 +60,7 @@ TileStampData::TileStampData(const TileStampData &other)
 
 TileStampData::~TileStampData()
 {
-    for (const TileStampVariation &variation : qAsConst(variations))
+    for (const TileStampVariation &variation : std::as_const(variations))
         delete variation.map;
 }
 
@@ -136,10 +133,8 @@ void TileStamp::setProbability(int index, qreal probability)
 QSize TileStamp::maxSize() const
 {
     QSize size;
-    for (const TileStampVariation &variation : qAsConst(d->variations)) {
-        size.setWidth(qMax(size.width(), variation.map->width()));
-        size.setHeight(qMax(size.height(), variation.map->height()));
-    }
+    for (const TileStampVariation &variation : std::as_const(d->variations))
+        size = size.expandedTo(variation.map->size());
     return size;
 }
 
@@ -184,15 +179,15 @@ void TileStamp::setQuickStampIndex(int quickStampIndex)
     d->quickStampIndex = quickStampIndex;
 }
 
-const TileStampVariation &TileStamp::randomVariation() const
+RandomPicker<Map *> TileStamp::randomVariations() const
 {
     Q_ASSERT(!d->variations.isEmpty());
 
-    RandomPicker<const TileStampVariation *> randomPicker;
-    for (const TileStampVariation &variation : qAsConst(d->variations))
-        randomPicker.add(&variation, variation.probability);
+    RandomPicker<Map *> randomPicker;
+    for (const TileStampVariation &variation : std::as_const(d->variations))
+        randomPicker.add(variation.map, variation.probability);
 
-    return *randomPicker.pick();
+    return randomPicker;
 }
 
 /**
@@ -296,7 +291,7 @@ QJsonObject TileStamp::toJson(const QDir &dir) const
         json.insert(QLatin1String("quickStampIndex"), d->quickStampIndex);
 
     QJsonArray variations;
-    for (const TileStampVariation &variation : qAsConst(d->variations)) {
+    for (const TileStampVariation &variation : std::as_const(d->variations)) {
         MapToVariantConverter converter;
         QVariant mapVariant = converter.toVariant(*variation.map, dir);
         QJsonValue mapJson = QJsonValue::fromVariant(mapVariant);

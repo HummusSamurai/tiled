@@ -28,9 +28,11 @@
 
 #pragma once
 
+#include "mapobject.h"
 #include "tiled_global.h"
 
 #include <functional>
+#include <memory>
 
 #include <QPainter>
 #include <QPainterPath>
@@ -47,7 +49,8 @@ class ImageLayer;
 
 enum RenderFlag {
     ShowTileObjectOutlines = 0x1,
-    ShowTileCollisionShapes = 0x2
+    ShowTileCollisionShapes = 0x2,
+    ShowTileAnimations = 0x4,
 };
 
 Q_DECLARE_FLAGS(RenderFlags, RenderFlag)
@@ -80,7 +83,7 @@ public:
      * Returns the bounding rectangle in pixels of the map associated with
      * this renderer.
      */
-    virtual QRect mapBoundingRect() const = 0;
+    QRect mapBoundingRect() const;
 
     /**
      * Returns the bounding rectangle in pixels of the given \a rect given in
@@ -133,9 +136,12 @@ public:
      * \a painter.
      */
     virtual void drawGrid(QPainter *painter, const QRectF &rect,
-                          QColor gridColor = Qt::black) const = 0;
+                          QColor gridColor = Qt::black, QSize gridMajor = QSize()) const = 0;
 
-    typedef std::function<void(QPoint, const QPointF &)> RenderTileCallback;
+    virtual QPointF snapToGrid(const QPointF &pixelCoords,
+                               int subdivisions = 1) const;
+
+    using RenderTileCallback = std::function<void (QPoint, const QPointF &)>;
 
     /**
      * Draws the given \a layer using the given \a painter.
@@ -176,7 +182,7 @@ public:
      */
     virtual void drawMapObject(QPainter *painter,
                                const MapObject *object,
-                               const QColor &color) const = 0;
+                               const MapObjectColors &colors) const = 0;
 
     /**
      * Draws the a pin in the given \a color using the \a painter.
@@ -269,15 +275,19 @@ public:
 
     static QPolygonF lineToPolygon(const QPointF &start, const QPointF &end);
 
+    static std::unique_ptr<MapRenderer> create(const Map *map);
+
 protected:
-    static QPen makeGridPen(const QPaintDevice *device, QColor color);
+    void setupGridPens(const QPaintDevice *device, QColor color,
+                       QPen &gridPen, QPen &majorGridPen, int gridSize,
+                       QSize gridMajor) const;
 
     void setCellType(CellType cellType) { mCellType = cellType; }
 
 private:
     const Map *mMap;
 
-    RenderFlags mFlags;
+    RenderFlags mFlags = ShowTileAnimations;
     CellType mCellType = OrthogonalCells;
     qreal mObjectLineWidth = 2;
     qreal mPainterScale = 1;

@@ -1,6 +1,7 @@
 /*
  * automapper.h
- * Copyright 2010-2012, Stefan Beller, stefanbeller@googlemail.com
+ * Copyright 2010-2016, Stefan Beller <stefanbeller@googlemail.com>
+ * Copyright 2016-2022, Thorbjørn Lindijer <bjorn@lindeijer.nl>
  *
  * This file is part of Tiled.
  *
@@ -20,8 +21,13 @@
 
 #pragma once
 
+#include "addremovemapobject.h"
+#include "randompicker.h"
+#include "tilededitor_global.h"
+#include "tilelayer.h"
 #include "tileset.h"
 
+#include <QCoreApplication>
 #include <QList>
 #include <QMap>
 #include <QRegion>
@@ -30,12 +36,15 @@
 #include <QVector>
 
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 namespace Tiled {
 
 class Layer;
 class Map;
 class MapObject;
+class MapRenderer;
 class ObjectGroup;
 class TileLayer;
 
@@ -43,33 +52,220 @@ class MapDocument;
 
 struct InputLayer
 {
-    TileLayer *tileLayer;
-    bool strictEmpty;
+    explicit InputLayer(const TileLayer *tileLayer = nullptr)
+        : tileLayer(tileLayer)
+    {}
+
+    const TileLayer *tileLayer;
+    bool strictEmpty = false;
+    int flagsMask = Cell::VisualFlags;
 };
 
-class InputConditions
+struct InputConditions
 {
-public:
-    QVector<InputLayer> listYes;    // "input"
-    QVector<InputLayer> listNo;     // "inputnot"
+    explicit InputConditions(const QString &layerName)
+        : layerName(layerName)
+    {}
+
+    QString layerName;
+    QVector<InputLayer> listYes;        // "input"
+    QVector<InputLayer> listNo;         // "inputnot"
 };
 
-// Maps layer names to their conditions
-typedef QMap<QString, InputConditions> InputIndex;
-
-// Maps an index to a group of input layers
-class InputLayers : public QMap<QString, InputIndex>
+struct InputSet
 {
-public:
-    QSet<QString> names; // all names
+    InputSet(const QString &name) : name(name) {}
+
+    QString name;
+    std::vector<InputConditions> layers;
 };
 
-class RuleOutput : public QMap<Layer*, int>
+struct OutputLayer
 {
-public:
-    QString index;
+    const Layer *layer;
+    QString name;
 };
 
+// One set of output layers sharing the same index
+struct OutputSet
+{
+    OutputSet(const QString &name) : name(name) {}
+
+    QString name;
+    QVector<OutputLayer> layers;
+    qreal probability = 1.0;
+};
+
+struct RuleOptions
+{
+    enum Enum
+    {
+        SkipChance          = 1 << 0,
+        ModX                = 1 << 1,
+        ModY                = 1 << 2,
+        OffsetX             = 1 << 3,
+        OffsetY             = 1 << 4,
+        NoOverlappingOutput = 1 << 5,
+        Disabled            = 1 << 6,
+        IgnoreLock          = 1 << 7
+    };
+
+    qreal skipChance = 0.0;
+    unsigned modX = 1;
+    unsigned modY = 1;
+    int offsetX = 0;
+    int offsetY = 0;
+    bool noOverlappingOutput = false;
+    bool disabled = false;
+    bool ignoreLock = false;
+};
+
+struct RuleOptionsArea
+{
+    QRect area;
+    RuleOptions options;
+    unsigned setOptions = 0;
+};
+
+struct RuleMapSetup
+{
+    /**
+     * The TileLayer that defines the input and output regions ('regions').
+     */
+    const TileLayer *mLayerRegions = nullptr;
+
+    /**
+     * The TileLayer that defines the input regions ('regions_input').
+     */
+    const TileLayer *mLayerInputRegions = nullptr;
+
+    /**
+     * The TileLayer that defines the output regions ('regions_output').
+     */
+    const TileLayer *mLayerOutputRegions = nullptr;
+
+    /**
+     * Holds different input sets. A rule matches when any of its input sets
+     * match.
+     */
+    std::vector<InputSet> mInputSets;
+
+    /**
+     * Holds different output sets. One of the sets is chosen by chance, so
+     * randomness is available.
+     */
+    std::vector<OutputSet> mOutputSets;
+
+    std::vector<RuleOptionsArea> mRuleOptionsAreas;
+
+    QSet<QString> mInputLayerNames;
+    QSet<QString> mOutputTileLayerNames;
+    QSet<QString> mOutputObjectGroupNames;
+
+    // The properties that should be copied to the target map, when any rule
+    // matches for these output layers.
+    QHash<const Layer*, Properties> mOutputLayerProperties;
+};
+
+struct RuleInputLayer
+{
+    const TileLayer *targetLayer = nullptr;   // reference to layer in target map
+    int posCount = 0;
+};
+
+struct RuleInputLayerPos
+{
+    int x;                          // position relative to match location
+    int y;
+    int anyCount;                   // any of these cells
+    int noneCount;                  // none of these cells
+};
+
+struct MatchCell : Cell
+{
+    int flagsMask = Cell::VisualFlags;
+
+    bool operator == (const MatchCell &other) const
+    {
+        return Cell::operator==(other) && flagsMask == other.flagsMask;
+    }
+};
+
+/**
+ * An efficient structure for matching purposes. Each data structure has a
+ * single container, which keeps things packed together in memory.
+ */
+struct RuleInputSet
+{
+    QVector<RuleInputLayer> layers;
+    QVector<RuleInputLayerPos> positions;
+    QVector<MatchCell> cells;
+};
+
+struct RuleOutputTileLayer
+{
+    const TileLayer *tileLayer;         // reference to layer in rule map
+    QString name;                       // target layer name
+};
+
+struct RuleOutputMapObjects
+{
+    const ObjectGroup *objectGroup;     // reference to layer in rule map
+    QVector<const MapObject*> objects;  // references to objects in rule map
+    QString name;                       // target layer name
+};
+
+struct RuleOutputSet
+{
+    QVector<RuleOutputTileLayer> tileOutputs;
+    QVector<RuleOutputMapObjects> objectOutputs;
+};
+
+struct CompileContext;
+struct ApplyContext;
+
+/**
+ * A single context is used for running all active AutoMapper instances on a
+ * specific target map.
+ *
+ * The AutoMapper does not change the target map directly. Instead, the changes
+ * can be found in the AutoMappingContext and still need to be applied
+ * manually.
+ *
+ * AutoMapping is done as follows:
+ *
+ * - Create a single AutoMappingContext
+ * - Call AutoMapper::prepareAutoMap for each active AutoMapper instance
+ * - Call AutoMapper::autoMap for each active AutoMapper instance
+ * - Apply the changes visible in the AutoMappingContext to the target map
+ */
+struct TILED_EDITOR_EXPORT AutoMappingContext
+{
+    AutoMappingContext(MapDocument *mapDocument);
+    AutoMappingContext(const AutoMappingContext &) = delete;
+
+    const MapDocument * const targetDocument;
+    const Map * const targetMap;
+
+    QVector<SharedTileset> newTilesets;             // New tilesets that might get used
+    std::vector<std::unique_ptr<Layer>> newLayers;  // Layers created in AutoMapper::prepareAutoMap
+    QVector<QVector<AddMapObjects::Entry>> newMapObjects;   // Objects placed by AutoMapper
+    QSet<MapObject*> mapObjectsToRemove;
+    QHash<const Layer*, Properties> changedProperties;
+
+    // Clones of existing tile layers that might have been changed in AutoMapper::autoMap
+    std::unordered_map<TileLayer*, std::unique_ptr<TileLayer>> originalToOutputLayerMapping;
+
+    // Used to keep track of touched tile layers (only when initially non-empty)
+    QVector<const TileLayer*> touchedTileLayers;
+
+private:
+    friend class AutoMapper;
+
+    QHash<QString, const TileLayer*> inputLayers;
+    QHash<QString, TileLayer*> outputTileLayers;
+    QHash<QString, ObjectGroup*> outputObjectGroups;
+};
 
 /**
  * This class does all the work for the automapping feature.
@@ -79,15 +275,16 @@ public:
  * - copy regions of Maps (multiple Layers, the layerlist is a
  *                         lookup-table for matching the Layers)
  */
-class AutoMapper : public QObject
+class TILED_EDITOR_EXPORT AutoMapper
 {
-    Q_OBJECT
+    Q_DECLARE_TR_FUNCTIONS(Tiled::AutoMapper)
 
 public:
     struct Options
     {
         /**
-         * Determines if all tiles in all touched layers should be deleted first.
+         * Determines whether all tiles in all touched layers should be deleted
+         * first.
          */
         bool deleteTiles = false;
 
@@ -95,7 +292,7 @@ public:
          * Whether rules can match when their input region is partially outside
          * of the map.
          */
-        bool matchOutsideMap = true;
+        bool matchOutsideMap = false;
 
         /**
          * If "matchOutsideMap" is true, treat the out-of-bounds tiles as if they
@@ -110,9 +307,10 @@ public:
         bool wrapBorder = false;
 
         /**
-         * Determines if a rule is allowed to overlap itself.
+         * Determines whether the rules on the map need to be matched in order.
          */
-        bool noOverlappingRules = false;
+        bool matchInOrder = false;
+        bool matchInOrderWasSet = false;
 
         /**
          * This variable determines, how many overlapping tiles should be used.
@@ -123,34 +321,27 @@ public:
         int autoMappingRadius = 0;
     };
 
+    using GetCell = const Cell &(*)(int x, int y, const TileLayer &tileLayer);
+
     /**
      * Constructs an AutoMapper.
      *
      * All data structures, which only rely on the rules map are setup
      * here.
      *
-     * @param workingDocument: the map to work on.
-     * @param rules: The rule map which should be used for automapping. The
-     *               AutoMapper takes ownership of this map.
-     * @param rulePath: The filepath to the rule map.
+     * @param rulesMap The map containing the AutoMapping rules. The
+     *                 AutoMapper takes ownership of this map.
      */
-    AutoMapper(MapDocument *workingDocument,
-               std::unique_ptr<Map> rules,
-               const QString &rulePath);
+    explicit AutoMapper(std::unique_ptr<Map> rulesMap);
     ~AutoMapper();
 
-    /**
-     * Checks if the passed \a ruleLayerName is used in this instance
-     * of Automapper.
-     */
-    bool ruleLayerNameUsed(const QString &ruleLayerName) const;
+    QString rulesMapFileName() const;
 
     /**
-     * Call prepareLoad first! Returns a set of strings describing the tile
-     * layers, which could be touched considering the given layers of the
-     * rule map.
+     * Checks if the passed \a ruleLayerName is used as input layer in this
+     * instance of AutoMapper.
      */
-    QSet<QString> touchedTileLayers() const;
+    bool ruleLayerNameUsed(const QString &ruleLayerName) const;
 
     /**
      * This needs to be called directly before the autoMap call.
@@ -158,79 +349,63 @@ public:
      * painful to keep these data structures up to date all time. (indices of
      * layers of the working map)
      */
-    bool prepareAutoMap();
+    void prepareAutoMap(AutoMappingContext &context) const;
 
     /**
-     * Here is done all the automapping.
+     * Here is done all the AutoMapping.
+     *
+     * When an \a appliedRegion is provided, it is set to the region where
+     * rule outputs have been applied.
      */
-    void autoMap(QRegion *where);
+    void autoMap(const QRegion &where,
+                 QRegion *appliedRegion,
+                 AutoMappingContext &context) const;
 
     /**
-     * This cleans all data structures, which are setup via prepareAutoMap,
-     * so the auto mapper becomes ready for its next automatic mapping.
-     */
-    void cleanAll();
-
-    /**
-     * Contains all errors until operation was canceled.
-     * The errorlist is cleared within prepareLoad and prepareAutoMap.
+     * Contains any errors which occurred while interpreting the rules map.
      */
     QString errorString() const { return mError; }
 
     /**
-     * Contains all warnings which occur at loading a rules map or while
-     * automapping.
-     * The errorlist is cleared within prepareLoad and prepareAutoMap.
+     * Contains any warnings which occurred while interpreting the rules map.
      */
     QString warningString() const { return mWarning; }
 
 private:
-    /**
-     * Reads the map properties of the rulesmap.
-     * @return returns true when anything is ok, false when errors occurred.
-     */
-    bool setupRuleMapProperties();
+    struct Rule
+    {
+        QRegion inputRegion;
+        QRegion outputRegion;
+        RuleOptions options;
+        std::optional<RuleOutputSet> outputSet;
+        RandomPicker<RuleOutputSet> outputSets;
+    };
+
+    void setupRuleMapProperties();
     void setupInputLayerProperties(InputLayer &inputLayer);
-
-    void cleanUpRulesMap();
-
-    /**
-     * Searches the rules layer for regions and stores these in \a rules.
-     * @return returns true when anything is ok, false when errors occurred.
-     */
-    bool setupRuleList();
+    static void setupOutputSetProperties(OutputSet &outputSet, RuleMapSetup &setup);
+    void setupRuleOptionsArea(RuleOptionsArea &optionsArea, const MapObject *mapObject);
 
     /**
      * Sets up the layers in the rules map, which are used for automapping.
-     * The layers are detected and put in the internal data structures
-     * @return returns true when anything is ok, false when errors occurred.
+     * The layers are detected and put in the internal data structures.
+     * @return true when everything is ok, false when errors occurred.
      */
-    bool setupRuleMapTileLayers();
+    bool setupRuleMapLayers();
+    void setupRules();
 
-    /**
-     * Checks if all needed layers in the working map are there.
-     * If not, add them in the correct order.
-     */
-    bool setupMissingLayers();
-
-    /**
-     * Checks if the layers setup as in setupRuleMapLayers are still right.
-     * If it's not right, correct them.
-     * @return returns true if everything went fine. false is returned when
-     *         no set layer was found
-     */
-    bool setupCorrectIndexes();
-
-    /**
-     * sets up the tilesets which are used in automapping.
-     * @return returns true when anything is ok, false when errors occurred.
-     */
-    bool setupTilesets();
-
-    /**
-     * Returns the conjunction of all regions of all setlayers.
-     */
-    QRegion computeSetLayersRegion() const;
+    void setupWorkMapLayers(AutoMappingContext &context) const;
+    bool compileRule(QVector<RuleInputSet> &inputSets,
+                     const Rule &rule,
+                     const AutoMappingContext &context) const;
+    bool compileInputSet(RuleInputSet &index,
+                         const InputSet &inputSet,
+                         const QRegion &inputRegion,
+                         CompileContext &compileContext,
+                         const AutoMappingContext &context) const;
+    bool compileOutputSet(RuleOutputSet &index,
+                          const OutputSet &outputSet,
+                          const QRegion &outputRegion) const;
 
     /**
      * This copies all tiles from TileLayer \a srcLayer to TileLayer
@@ -243,144 +418,73 @@ private:
      * so the maybe existing tile in dst will not be overwritten.
      */
     void copyTileRegion(const TileLayer *srcLayer, QRect rect, TileLayer *dstLayer,
-                        int dstX, int dstY);
+                        int dstX, int dstY, const AutoMappingContext &context) const;
 
     /**
-     * This copies all objects from the \a src_lr ObjectGroup to the \a dst_lr
-     * in the given \a rect.
+     * This copies multiple layers from one map to another.
+     * Only the output region of the \a rule is considered for copying.
+     * In the destination it will come to the region translated by \a offset.
+     * The parameter \a outputSet contains a map of which layers of the rules
+     * map should get copied into which layers of the working map.
+     */
+    void copyMapRegion(const Rule &rule, QPoint offset,
+                       const RuleOutputSet &outputSet,
+                       AutoMappingContext &context) const;
+
+    void applyLayerProperties(const Layer *from, Layer *to,
+                              AutoMappingContext &context) const;
+
+    /**
+     * This goes through all the positions in \a matchRegion and checks if the
+     * \a rule matches there.
      *
-     * The parameter \a dstX and \a dstY offset the copied objects in the
-     * destination object group.
+     * Calls \a matched for each matching location.
      */
-    void copyObjectRegion(const ObjectGroup *srcLayer, const QRectF &rect,
-                          ObjectGroup *dstLayer, int dstX, int dstY);
-
-
-    /**
-     * This copies multiple TileLayers from one map to another.
-     * Only the region \a region is considered for copying.
-     * In the destination it will come to the region translated by Offset.
-     * The parameter \a layerTranslation is a map of which layers of the rulesmap
-     * should get copied into which layers of the working map.
-     */
-    void copyMapRegion(const QRegion &region, QPoint Offset,
-                       const RuleOutput &layerTranslation);
+    void matchRule(const Rule &rule,
+                   const QRegion &matchRegion,
+                   GetCell getCell,
+                   const std::function<void (QPoint)> &matched,
+                   const AutoMappingContext &context) const;
 
     /**
-     * This goes through all the positions of the mMapWork and checks if
-     * there fits the rule given by the region in mMapRuleSet.
-     * if there is a match all Layers are copied to mMapWork.
-     * @param ruleIndex: the region which should be compared to all positions
-     *              of mMapWork will be looked up in mRulesInput and mRulesOutput
-     * @return a rectangle where the rule actually got applied
+     * Applies the given \a rule at the given \a pos.
      */
-    QRect applyRule(int ruleIndex, const QRect &where);
+    void applyRule(const Rule &rule, QPoint pos, ApplyContext &applyContext,
+                   AutoMappingContext &context) const;
+
+    void collectLayerOutputRegions(const Rule &rule,
+                                   const RuleOutputSet &outputSet,
+                                   AutoMappingContext &context,
+                                   QHash<const Layer *, QRegion> &ruleRegionInLayer) const;
+
+    void addWarning(const QString &text,
+                    std::function<void()> callback = std::function<void()>());
 
     /**
-     * Cleans up the data structures filled by setupRuleMapLayers(),
-     * so the next rule can be processed.
+     * Map containing the rules.
      */
-    void cleanUpRuleMapLayers();
+    const std::unique_ptr<Map> mRulesMap;
+    const std::unique_ptr<MapRenderer> mRulesMapRenderer;
+
+    RuleMapSetup mRuleMapSetup;
 
     /**
-     * Cleans up the data structures filled by setupTilesets(),
-     * so the next rule can be processed.
+     * Stores the input and output region for each rule in mRulesMap.
      */
-    void cleanTilesets();
-
-    /**
-     * Cleans up the added tile layers setup by setupMissingLayers(),
-     * so we have a minimal addition of tile layers by the automapping.
-     */
-    void cleanTileLayers();
-
-    /**
-     * where to work in
-     */
-    MapDocument *mMapDocument;
-
-    /**
-     * the same as mMapDocument->map()
-     */
-    Map *mMapWork;
-
-    /**
-     * map containing the rules, usually different than mMapWork
-     */
-    std::unique_ptr<Map> mMapRules;
-
-    /**
-     * This contains all added tilesets as pointers.
-     * if rules use Tilesets which are not in the mMapWork they are added.
-     * keep track of them, because we need to delete them afterwards,
-     * when they still are unused
-     * they will be added while setupTilesets().
-     */
-    QVector<SharedTileset> mAddedTilesets;
-
-    /**
-     * description see: mAddedTilesets
-     */
-    QVector<Layer*> mAddedLayers;
-
-    /**
-     * Points to the tilelayer, which defines the input regions.
-     */
-    TileLayer *mLayerInputRegions;
-
-    /**
-     * Points to the tilelayer, which defines the output regions.
-     */
-    TileLayer *mLayerOutputRegions;
-
-    /**
-     * Contains all tilelayer pointers, which names begin with input*
-     * It is sorted by index and name
-     */
-    InputLayers mInputRules;
-
-    /**
-     * List of Regions in mMapRules to know where the input rules are
-     */
-    QVector<QRegion> mRulesInput;
-
-    /**
-     * List of regions in mMapRules to know where the output of a
-     * rule is.
-     * mRulesOutput[i] is the output of that rule,
-     * which has the input at mRulesInput[i], meaning that mRulesInput
-     * and mRulesOutput must match with the indexes.
-     */
-    QVector<QRegion> mRulesOutput;
-
-    /**
-     * The inner set with layers to indexes is needed for translating
-     * tile layers from mMapRules to mMapWork.
-     *
-     * The key is the pointer to the layer in the rulemap. The
-     * pointer to the layer within the working map is not hardwired, but the
-     * position in the layerlist, where it was found the last time.
-     * This loosely bound pointer ensures we will get the right layer, since we
-     * need to check before anyway, and it is still fast.
-     *
-     * The list is used to hold different translation tables
-     * => one of the tables is chosen by chance, so randomness is available
-     */
-    QVector<RuleOutput> mLayerList;
-
-    /**
-     * store the name of the processed rules file, to have detailed
-     * error messages available
-     */
-    QString mRulePath;
+    std::vector<Rule> mRules;
 
     Options mOptions;
 
-    QSet<QString> mTouchedTileLayers;
-    QSet<QString> mTouchedObjectGroups;
+    /**
+     * Rule options set on the map, which become the default for all rules
+     * on this map.
+     */
+    RuleOptions mRuleOptions;
 
     QString mError;
     QString mWarning;
+
+    const TileLayer dummy;  // used in case input layers are missing
 };
 
 } // namespace Tiled

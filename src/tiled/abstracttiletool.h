@@ -36,7 +36,6 @@ class TileStamp;
 class AbstractTileTool : public AbstractTool
 {
     Q_OBJECT
-    Q_INTERFACES(Tiled::AbstractTool)
 
     Q_PROPERTY(QPoint tilePosition READ tilePosition)
 
@@ -60,6 +59,8 @@ public:
     void mouseLeft() override;
     void mouseMoved(const QPointF &pos, Qt::KeyboardModifiers modifiers) override;
     void mousePressed(QGraphicsSceneMouseEvent *event) override;
+
+    void keyPressed(QKeyEvent *event) override;
 
 protected:
     void mapDocumentChanged(MapDocument *oldDocument,

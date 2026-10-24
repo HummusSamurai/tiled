@@ -32,11 +32,15 @@
 #include "object.h"
 #include "tileset.h"
 
+#include <QPainter>
 #include <QPixmap>
 #include <QRect>
 #include <QSet>
 #include <QString>
 #include <QVector>
+
+#include <cstddef>
+#include <iterator>
 
 namespace Tiled {
 
@@ -72,7 +76,6 @@ public:
      */
     int id() const { return mId; }
     void setId(int id) { mId = id; }
-    void resetIds();
 
     const QColor &tintColor() const { return mTintColor; }
     void setTintColor(const QColor &tintColor) { mTintColor = tintColor; }
@@ -190,6 +193,10 @@ public:
     QPointF parallaxFactor() const;
     QPointF effectiveParallaxFactor() const;
 
+    BlendMode blendMode() const;
+    void setBlendMode(BlendMode mode);
+    QPainter::CompositionMode compositionMode() const;
+
     bool canMergeDown() const;
 
     virtual bool isEmpty() const = 0;
@@ -261,6 +268,7 @@ protected:
     int mY = 0;
     QPointF mOffset;
     QPointF mParallaxFactor = { 1.0, 1.0 };
+    BlendMode mBlendMode = BlendMode::Normal;
     qreal mOpacity = 1.0;
     QColor mTintColor;
     bool mVisible = true;
@@ -305,6 +313,21 @@ inline QPointF Layer::parallaxFactor() const
     return mParallaxFactor;
 }
 
+inline BlendMode Layer::blendMode() const
+{
+    return mBlendMode;
+}
+
+inline void Layer::setBlendMode(BlendMode mode)
+{
+    mBlendMode = mode;
+}
+
+inline QPainter::CompositionMode Layer::compositionMode() const
+{
+    return static_cast<QPainter::CompositionMode>(mBlendMode);
+}
+
 
 /**
  * An iterator for iterating over the layers of a map, in the order in which
@@ -317,10 +340,18 @@ inline QPointF Layer::parallaxFactor() const
 class TILEDSHARED_EXPORT LayerIterator
 {
 public:
+    using iterator_category = std::forward_iterator_tag;
+    using difference_type   = std::ptrdiff_t;
+    using value_type        = Layer*;
+    using pointer           = value_type*;
+    using reference         = value_type&;
+
     LayerIterator(const Map *map, int layerTypes = Layer::AnyLayerType);
     LayerIterator(Layer *start);
 
     Layer *currentLayer() const;
+    void setCurrentLayer(Layer *layer);
+
     int currentSiblingIndex() const;
 
     bool hasNextSibling() const;
@@ -426,7 +457,7 @@ inline Layer *LayerIterator::operator->() const
 }
 
 
-TILEDSHARED_EXPORT int globalIndex(Layer *layer);
+TILEDSHARED_EXPORT int globalIndex(const Layer *layer);
 TILEDSHARED_EXPORT Layer *layerAtGlobalIndex(const Map *map, int index);
 
 } // namespace Tiled

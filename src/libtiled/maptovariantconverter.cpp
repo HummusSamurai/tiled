@@ -21,6 +21,7 @@
 
 #include "maptovariantconverter.h"
 
+#include "fileformat.h"
 #include "grouplayer.h"
 #include "imagelayer.h"
 #include "map.h"
@@ -45,7 +46,15 @@ QVariant MapToVariantConverter::toVariant(const Map &map, const QDir &mapDir)
     QVariantMap mapVariant;
 
     mapVariant[QStringLiteral("type")] = QLatin1String("map");
-    mapVariant[QStringLiteral("version")] = (mVersion == 2) ? 1.5 : 1.1;
+
+    if (!map.className().isEmpty())
+        mapVariant[QStringLiteral("class")] = map.className();
+
+    if (mVersion == 2)
+        mapVariant[QStringLiteral("version")] = FileFormat::versionString();
+    else
+        mapVariant[QStringLiteral("version")] = 1.1;
+
     mapVariant[QStringLiteral("tiledversion")] = QCoreApplication::applicationVersion();
     mapVariant[QStringLiteral("orientation")] = orientationToString(map.orientation());
     mapVariant[QStringLiteral("renderorder")] = renderOrderToString(map.renderOrder());
@@ -91,6 +100,16 @@ QVariant MapToVariantConverter::toVariant(const Map &map, const QDir &mapDir)
         mapVariant[QStringLiteral("staggerindex")] = staggerIndexToString(map.staggerIndex());
     }
 
+    if (map.skewX())
+        mapVariant[QStringLiteral("skewx")] = map.skewX();
+    if (map.skewY())
+        mapVariant[QStringLiteral("skewy")] = map.skewY();
+
+    if (!map.parallaxOrigin().isNull()) {
+        mapVariant[QStringLiteral("parallaxoriginx")] = map.parallaxOrigin().x();
+        mapVariant[QStringLiteral("parallaxoriginy")] = map.parallaxOrigin().y();
+    }
+
     const QColor bgColor = map.backgroundColor();
     if (bgColor.isValid())
         mapVariant[QStringLiteral("backgroundcolor")] = colorToString(bgColor);
@@ -131,7 +150,7 @@ QVariant MapToVariantConverter::toVariant(const ObjectTemplate &objectTemplate,
     mGidMapper.clear();
     if (Tileset *tileset = objectTemplate.object()->cell().tileset()) {
         unsigned firstGid = 1;
-        mGidMapper.insert(firstGid, tileset->sharedPointer());
+        mGidMapper.insert(firstGid, tileset->sharedFromThis());
         objectTemplateVariant[QStringLiteral("tileset")] = toVariant(*tileset, firstGid);
     }
 
@@ -150,7 +169,7 @@ QVariant MapToVariantConverter::toVariant(const Tileset &tileset,
 
         const QString &fileName = tileset.fileName();
         if (!fileName.isEmpty()) {
-            QString source = mDir.relativeFilePath(fileName);
+            const QString source = filePathRelativeTo(mDir, fileName);
             tilesetVariant[QStringLiteral("source")] = source;
 
             // Tileset is external, so no need to write any of the stuff below
@@ -161,11 +180,16 @@ QVariant MapToVariantConverter::toVariant(const Tileset &tileset,
         tilesetVariant[QStringLiteral("type")] = QLatin1String("tileset");
 
         // Include version in external tilesets
-        tilesetVariant[QStringLiteral("version")] = (mVersion == 2) ? 1.5 : 1.1;
+        if (mVersion == 2)
+            tilesetVariant[QStringLiteral("version")] = FileFormat::versionString();
+        else
+            tilesetVariant[QStringLiteral("version")] = 1.1;
         tilesetVariant[QStringLiteral("tiledversion")] = QCoreApplication::applicationVersion();
     }
 
     tilesetVariant[QStringLiteral("name")] = tileset.name();
+    if (!tileset.className().isEmpty())
+        tilesetVariant[QStringLiteral("class")] = tileset.className();
     tilesetVariant[QStringLiteral("tilewidth")] = tileset.tileWidth();
     tilesetVariant[QStringLiteral("tileheight")] = tileset.tileHeight();
     tilesetVariant[QStringLiteral("spacing")] = tileset.tileSpacing();
@@ -193,6 +217,12 @@ QVariant MapToVariantConverter::toVariant(const Tileset &tileset,
 
     if (tileset.objectAlignment() != Unspecified)
         tilesetVariant[QStringLiteral("objectalignment")] = alignmentToString(tileset.objectAlignment());
+
+    if (tileset.tileRenderSize() != Tileset::TileSize)
+        tilesetVariant[QStringLiteral("tilerendersize")] = Tileset::tileRenderSizeToString(tileset.tileRenderSize());
+
+    if (tileset.fillMode() != Tileset::Stretch)
+        tilesetVariant[QStringLiteral("fillmode")] = Tileset::fillModeToString(tileset.fillMode());
 
     addProperties(tilesetVariant, tileset.properties());
 
@@ -248,8 +278,10 @@ QVariant MapToVariantConverter::toVariant(const Tileset &tileset,
     // Used for version 2
     QVariantList tilesVariant;
 
-    for (const Tile *tile  : tileset.tiles()) {
-        const Properties properties = tile->properties();
+    const bool includeAllTiles = mVersion != 1 && tileset.anyTileOutOfOrder();
+
+    for (const Tile *tile : tileset.tiles()) {
+        const Properties &properties = tile->properties();
         QVariantMap tileVariant;
 
         if (mVersion == 1) {
@@ -261,18 +293,27 @@ QVariant MapToVariantConverter::toVariant(const Tileset &tileset,
             addProperties(tileVariant, properties);
         }
 
-        if (!tile->type().isEmpty())
-            tileVariant[QStringLiteral("type")] = tile->type();
+        if (!tile->className().isEmpty())
+            tileVariant[FileFormat::classPropertyNameForObject()] = tile->className();
         if (tile->probability() != 1.0)
             tileVariant[QStringLiteral("probability")] = tile->probability();
         if (!tile->imageSource().isEmpty()) {
             const QString rel = toFileReference(tile->imageSource(), mDir);
             tileVariant[QStringLiteral("image")] = rel;
 
-            const QSize tileSize = tile->size();
-            if (!tileSize.isNull()) {
-                tileVariant[QStringLiteral("imagewidth")] = tileSize.width();
-                tileVariant[QStringLiteral("imageheight")] = tileSize.height();
+            const QSize imageSize = tile->image().isNull() ? tile->size()
+                                                           : tile->image().size();
+            if (!imageSize.isNull()) {
+                tileVariant[QStringLiteral("imagewidth")] = imageSize.width();
+                tileVariant[QStringLiteral("imageheight")] = imageSize.height();
+            }
+
+            const QRect &imageRect = tile->imageRect();
+            if (!imageRect.isNull() && imageRect != tile->image().rect() && tileset.isCollection()) {
+                tileVariant[QStringLiteral("x")] = imageRect.x();
+                tileVariant[QStringLiteral("y")] = imageRect.y();
+                tileVariant[QStringLiteral("width")] = imageRect.width();
+                tileVariant[QStringLiteral("height")] = imageRect.height();
             }
         }
         if (tile->objectGroup())
@@ -288,7 +329,7 @@ QVariant MapToVariantConverter::toVariant(const Tileset &tileset,
             tileVariant[QStringLiteral("animation")] = frameVariants;
         }
 
-        if (!tileVariant.empty()) {
+        if (includeAllTiles || !tileVariant.empty()) {
             if (mVersion == 1) {
                 tilesVariantMap[QString::number(tile->id())] = tileVariant;
             } else {
@@ -325,11 +366,15 @@ QVariant MapToVariantConverter::toVariant(const Properties &properties) const
 {
     QVariantMap variantMap;
 
+    // In the JSON1 format, none of the export values retain their type, we use the values only.
+    ExportContext context(mDir.path());
+    context.setRecursiveBehavior(ExportContext::RecursiveBehavior::ValuesOnly);
+
     Properties::const_iterator it = properties.constBegin();
     Properties::const_iterator it_end = properties.constEnd();
     for (; it != it_end; ++it) {
-        const QVariant value = toExportValue(it.value(), mDir);
-        variantMap[it.key()] = value;
+        const auto exportValue = context.toExportValue(it.value());
+        variantMap[it.key()] = exportValue.value;
     }
 
     return variantMap;
@@ -338,11 +383,15 @@ QVariant MapToVariantConverter::toVariant(const Properties &properties) const
 QVariant MapToVariantConverter::propertyTypesToVariant(const Properties &properties) const
 {
     QVariantMap variantMap;
+    const ExportContext context;  // path irrelevant since only typeName is used
 
     Properties::const_iterator it = properties.constBegin();
     Properties::const_iterator it_end = properties.constEnd();
-    for (; it != it_end; ++it)
-        variantMap[it.key()] = typeToName(it.value().userType());
+    for (; it != it_end; ++it) {
+        const auto exportValue = context.toExportValue(it.value());
+        // TODO: Support custom property types in json1? Maybe with a customPropertyTypesToVariant...
+        variantMap[it.key()] = exportValue.typeName;
+    }
 
     return variantMap;
 }
@@ -353,6 +402,8 @@ QVariant MapToVariantConverter::toVariant(const WangSet &wangSet) const
     QVariantMap wangSetVariant;
 
     wangSetVariant[QStringLiteral("name")] = wangSet.name();
+    if (!wangSet.className().isEmpty())
+        wangSetVariant[QStringLiteral("class")] = wangSet.className();
     wangSetVariant[QStringLiteral("type")] = wangSetTypeToString(wangSet.type());
     wangSetVariant[QStringLiteral("tile")] = wangSet.imageTileId();
 
@@ -387,6 +438,8 @@ QVariant MapToVariantConverter::toVariant(const WangColor &wangColor) const
     QVariantMap colorVariant;
     colorVariant[QStringLiteral("color")] = colorToString(wangColor.color());
     colorVariant[QStringLiteral("name")] = wangColor.name();
+    if (!wangColor.className().isEmpty())
+        colorVariant[QStringLiteral("class")] = wangColor.className();
     colorVariant[QStringLiteral("probability")] = wangColor.probability();
     colorVariant[QStringLiteral("tile")] = wangColor.imageId();
     addProperties(colorVariant, wangColor.properties());
@@ -503,12 +556,12 @@ QVariant MapToVariantConverter::toVariant(const MapObject &object) const
 {
     QVariantMap objectVariant;
     const QString &name = object.name();
-    const QString &type = object.type();
+    const QString &className = object.className();
 
     addProperties(objectVariant, object.properties());
 
     if (const ObjectTemplate *objectTemplate = object.objectTemplate()) {
-        QString relativeFileName = mDir.relativeFilePath(objectTemplate->fileName());
+        const QString relativeFileName = filePathRelativeTo(mDir, objectTemplate->fileName());
         objectVariant[QStringLiteral("template")] = relativeFileName;
     }
 
@@ -521,9 +574,8 @@ QVariant MapToVariantConverter::toVariant(const MapObject &object) const
     if (notTemplateInstance || object.propertyChanged(MapObject::NameProperty))
         objectVariant[QStringLiteral("name")] = name;
 
-    if (notTemplateInstance || object.propertyChanged(MapObject::TypeProperty))
-        objectVariant[QStringLiteral("type")] = type;
-
+    if (notTemplateInstance || !className.isEmpty())
+        objectVariant[FileFormat::classPropertyNameForObject()] = className;
 
     if (notTemplateInstance || object.propertyChanged(MapObject::CellProperty))
         if (!object.cell().isEmpty())
@@ -541,6 +593,9 @@ QVariant MapToVariantConverter::toVariant(const MapObject &object) const
 
     if (notTemplateInstance || object.propertyChanged(MapObject::RotationProperty))
         objectVariant[QStringLiteral("rotation")] = object.rotation();
+
+    if (notTemplateInstance || object.propertyChanged(MapObject::OpacityProperty))
+        objectVariant[QStringLiteral("opacity")] = object.opacity();
 
     if (notTemplateInstance || object.propertyChanged(MapObject::VisibleProperty))
         objectVariant[QStringLiteral("visible")] = object.isVisible();
@@ -577,6 +632,10 @@ QVariant MapToVariantConverter::toVariant(const MapObject &object) const
     case MapObject::Ellipse:
         if (notTemplateInstance || object.propertyChanged(MapObject::ShapeProperty))
             objectVariant[QStringLiteral("ellipse")] = true;
+        break;
+    case MapObject::Capsule:
+        if (notTemplateInstance || object.propertyChanged(MapObject::ShapeProperty))
+            objectVariant[QStringLiteral("capsule")] = true;
         break;
     case MapObject::Text:
         if (notTemplateInstance || (object.propertyChanged(MapObject::TextProperty) ||
@@ -649,9 +708,20 @@ QVariant MapToVariantConverter::toVariant(const ImageLayer &imageLayer) const
     const QString rel = toFileReference(imageLayer.imageSource(), mDir);
     imageLayerVariant[QStringLiteral("image")] = rel;
 
+    const QSize imageSize = imageLayer.image().size();
+    if (!imageSize.isNull()) {
+        imageLayerVariant[QStringLiteral("imagewidth")] = imageSize.width();
+        imageLayerVariant[QStringLiteral("imageheight")] = imageSize.height();
+    }
+
     const QColor transColor = imageLayer.transparentColor();
     if (transColor.isValid())
         imageLayerVariant[QStringLiteral("transparentcolor")] = transColor.name();
+
+    if (imageLayer.repeatX())
+        imageLayerVariant[QStringLiteral("repeatx")] = imageLayer.repeatX();
+    if (imageLayer.repeatY())
+        imageLayerVariant[QStringLiteral("repeaty")] = imageLayer.repeatY();
 
     return imageLayerVariant;
 }
@@ -709,9 +779,13 @@ void MapToVariantConverter::addLayerAttributes(QVariantMap &layerVariant,
         layerVariant[QStringLiteral("id")] = layer.id();
 
     layerVariant[QStringLiteral("name")] = layer.name();
+    if (!layer.className().isEmpty())
+        layerVariant[QStringLiteral("class")] = layer.className();
     layerVariant[QStringLiteral("x")] = layer.x();
     layerVariant[QStringLiteral("y")] = layer.y();
     layerVariant[QStringLiteral("visible")] = layer.isVisible();
+    if (layer.isLocked())
+        layerVariant[QStringLiteral("locked")] = true;
     layerVariant[QStringLiteral("opacity")] = layer.opacity();
 
     const QPointF offset = layer.offset();
@@ -729,6 +803,9 @@ void MapToVariantConverter::addLayerAttributes(QVariantMap &layerVariant,
     if (layer.tintColor().isValid())
         layerVariant[QStringLiteral("tintcolor")] = colorToString(layer.tintColor());
 
+    if (layer.blendMode() != BlendMode::Normal)
+        layerVariant[QStringLiteral("mode")] = blendModeToString(layer.blendMode());
+
     addProperties(layerVariant, layer.properties());
 }
 
@@ -738,36 +815,45 @@ void MapToVariantConverter::addProperties(QVariantMap &variantMap,
     if (properties.isEmpty())
         return;
 
+    ExportContext context(mDir.path());
+
     if (mVersion == 1) {
+        // The JSON1 format doesn't include type information for list values or class members
+        context.setRecursiveBehavior(ExportContext::RecursiveBehavior::ValuesOnly);
+
         QVariantMap propertiesMap;
         QVariantMap propertyTypesMap;
 
         Properties::const_iterator it = properties.constBegin();
         Properties::const_iterator it_end = properties.constEnd();
         for (; it != it_end; ++it) {
-            int type = it.value().userType();
-            const QVariant value = toExportValue(it.value(), mDir);
+            const auto exportValue = context.toExportValue(it.value());
 
-            propertiesMap[it.key()] = value;
-            propertyTypesMap[it.key()] = typeToName(type);
+            propertiesMap[it.key()] = exportValue.value;
+            propertyTypesMap[it.key()] = exportValue.typeName;
+            // TODO: Support custom property types in json1? Maybe with a customPropertyTypesMap...
         }
 
-        variantMap[QStringLiteral("properties")] = propertiesMap;
-        variantMap[QStringLiteral("propertytypes")] = propertyTypesMap;
+        variantMap[QStringLiteral("properties")] = std::move(propertiesMap);
+        variantMap[QStringLiteral("propertytypes")] = std::move(propertyTypesMap);
     } else {
+        context.setRecursiveBehavior(ExportContext::RecursiveBehavior::TypedListValues);
+
         QVariantList propertiesVariantList;
 
         Properties::const_iterator it = properties.constBegin();
         Properties::const_iterator it_end = properties.constEnd();
         for (; it != it_end; ++it) {
-            int type = it.value().userType();
-            const QVariant value = toExportValue(it.value(), mDir);
+            const auto exportValue = context.toExportValue(it.value());
 
             QVariantMap propertyVariantMap;
             propertyVariantMap[QStringLiteral("name")] = it.key();
-            propertyVariantMap[QStringLiteral("value")] = value;
-            propertyVariantMap[QStringLiteral("type")] = typeToName(type);
-            propertiesVariantList << propertyVariantMap;
+            propertyVariantMap[QStringLiteral("type")] = exportValue.typeName;
+            propertyVariantMap[QStringLiteral("value")] = exportValue.value;
+            if (!exportValue.propertyTypeName.isEmpty())
+                propertyVariantMap[QStringLiteral("propertytype")] = exportValue.propertyTypeName;
+
+            propertiesVariantList << std::move(propertyVariantMap);
         }
 
         variantMap[QStringLiteral("properties")] = propertiesVariantList;

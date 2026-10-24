@@ -33,7 +33,7 @@ class TileLayerEdit : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(Tiled::EditableTileLayer *target READ target)
+    Q_PROPERTY(Tiled::EditableTileLayer *target READ target CONSTANT)
     Q_PROPERTY(bool mergeable READ isMergeable WRITE setMergeable)
 
 public:
@@ -54,6 +54,7 @@ public:
 
 public slots:
     void setTile(int x, int y, EditableTile *tile, int flags = 0);
+    void setCell(int x, int y, const Tiled::Cell &cell);
     void apply();
 
 private:
@@ -79,5 +80,3 @@ inline EditableTileLayer *TileLayerEdit::target() const
 }
 
 } // namespace Tiled
-
-Q_DECLARE_METATYPE(Tiled::TileLayerEdit*)

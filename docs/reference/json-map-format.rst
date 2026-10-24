@@ -20,6 +20,7 @@ Map
     :widths: 1, 1, 4
 
     backgroundcolor,  string,           "Hex-formatted color (#RRGGBB or #AARRGGBB) (optional)"
+    class,            string,           "The class of the map (since 1.9, optional)"
     compressionlevel, int,              "The compression level to use for tile layer data (defaults to -1, which means to use the algorithm default)"
     height,           int,              "Number of tile rows"
     hexsidelength,    int,              "Length of the side of a hex tile in pixels (hexagonal maps only)"
@@ -27,9 +28,13 @@ Map
     layers,           array,            "Array of :ref:`Layers <json-layer>`"
     nextlayerid,      int,              "Auto-increments for each layer"
     nextobjectid,     int,              "Auto-increments for each placed object"
-    orientation,      string,           "``orthogonal``, ``isometric``, ``staggered`` or ``hexagonal``"
+    orientation,      string,           "``orthogonal``, ``isometric``, ``oblique``, ``staggered`` or ``hexagonal``"
+    parallaxoriginx,  double,           "X coordinate of the parallax origin in pixels (since 1.8, default: 0)"
+    parallaxoriginy,  double,           "Y coordinate of the parallax origin in pixels (since 1.8, default: 0)"
     properties,       array,            "Array of :ref:`Properties <json-property>`"
     renderorder,      string,           "``right-down`` (the default), ``right-up``, ``left-down`` or ``left-up`` (currently only supported for orthogonal maps)"
+    skewx,            int,              "X offset applied per tile row (oblique maps only)"
+    skewy,            int,              "Y offset applied per tile column (oblique maps only)"
     staggeraxis,      string,           "``x`` or ``y`` (staggered / hexagonal maps only)"
     staggerindex,     string,           "``odd`` or ``even`` (staggered / hexagonal maps only)"
     tiledversion,     string,           "The Tiled version used to save the file"
@@ -37,7 +42,7 @@ Map
     tilesets,         array,            "Array of :ref:`Tilesets <json-tileset>`"
     tilewidth,        int,              "Map grid width"
     type,             string,           "``map`` (since 1.0)"
-    version,          number,           "The JSON format version"
+    version,          string,           "The JSON format version (previously a number, saved as string since 1.6)"
     width,            int,              "Number of tile columns"
 
 Map Example
@@ -81,34 +86,46 @@ Layer
     :widths: 1, 1, 4
 
     chunks,           array,            "Array of :ref:`chunks <json-chunk>` (optional). ``tilelayer`` only."
-    compression,      string,           "``zlib``, ``gzip``, ``zstd`` (since Tiled 1.3) or empty (default). ``tilelayer`` only."
+    class,            string,           "The class of the layer (since 1.9, optional)"
+    compression,      string,           "``zlib``, ``gzip``, ``zstd`` (since 1.3) or empty (default). ``tilelayer`` only."
     data,             array or string,  "Array of ``unsigned int`` (GIDs) or base64-encoded data. ``tilelayer`` only."
     draworder,        string,           "``topdown`` (default) or ``index``. ``objectgroup`` only."
     encoding,         string,           "``csv`` (default) or ``base64``. ``tilelayer`` only."
-    height,           int,              "Row count. Same as map height for fixed-size maps."
+    height,           int,              "Row count. Same as map height for fixed-size maps. ``tilelayer`` only."
     id,               int,              "Incremental ID - unique across all layers"
     image,            string,           "Image used by this layer. ``imagelayer`` only."
+    imageheight,      int,              "Height of the image used by this layer. ``imagelayer`` only. (since 1.11.1)"
+    imagewidth,       int,              "Width of the image used by this layer. ``imagelayer`` only. (since 1.11.1)"
     layers,           array,            "Array of :ref:`layers <json-layer>`. ``group`` only."
+    locked,           bool,             "Whether layer is locked in the editor (default: false). (since 1.8.2)"
+    mode,             string,           "The :ref:`blend mode <json-blend-mode>` to use when rendering the layer. (since 1.12)"
     name,             string,           "Name assigned to this layer"
     objects,          array,            "Array of :ref:`objects <json-object>`. ``objectgroup`` only."
     offsetx,          double,           "Horizontal layer offset in pixels (default: 0)"
     offsety,          double,           "Vertical layer offset in pixels (default: 0)"
-    opacity,          double,           "Value between 0 and 1"
-    parallaxx,        double,           "Horizontal :ref:`parallax factor <parallax-factor>` for this layer (default: 1). (since Tiled 1.5)"
-    parallaxy,        double,           "Vertical :ref:`parallax factor <parallax-factor>` for this layer (default: 1). (since Tiled 1.5)"
+    opacity,          double,           "Value between 0 and 1 (default: 1)"
+    parallaxx,        double,           "Horizontal :ref:`parallax factor <parallax-factor>` for this layer (default: 1). (since 1.5)"
+    parallaxy,        double,           "Vertical :ref:`parallax factor <parallax-factor>` for this layer (default: 1). (since 1.5)"
     properties,       array,            "Array of :ref:`Properties <json-property>`"
+    repeatx,          bool,             "Whether the image drawn by this layer is repeated along the X axis. ``imagelayer`` only. (since 1.8)"
+    repeaty,          bool,             "Whether the image drawn by this layer is repeated along the Y axis. ``imagelayer`` only. (since 1.8)"
     startx,           int,              "X coordinate where layer content starts (for infinite maps)"
     starty,           int,              "Y coordinate where layer content starts (for infinite maps)"
     tintcolor,        string,           "Hex-formatted :ref:`tint color <tint-color>` (#RRGGBB or #AARRGGBB) that is multiplied with any graphics drawn by this layer or any child layers (optional)."
     transparentcolor, string,           "Hex-formatted color (#RRGGBB) (optional). ``imagelayer`` only."
     type,             string,           "``tilelayer``, ``objectgroup``, ``imagelayer`` or ``group``"
     visible,          bool,             "Whether layer is shown or hidden in editor"
-    width,            int,              "Column count. Same as map width for fixed-size maps."
+    width,            int,              "Column count. Same as map width for fixed-size maps. ``tilelayer`` only."
     x,                int,              "Horizontal layer offset in tiles. Always 0."
     y,                int,              "Vertical layer offset in tiles. Always 0."
 
 Tile Layer Example
 ~~~~~~~~~~~~~~~~~~
+
+The data of a tile layer can be stored as a native JSON array or as
+base64-encoded and optionally compressed binary data, the same as done in the
+:ref:`TMX format <tmx-data>`. The tiles are referenced using
+:doc:`global-tile-ids`.
 
 .. code:: json
 
@@ -154,6 +171,30 @@ Object Layer Example
       "y":0
     }
 
+
+.. _json-blend-mode:
+
+Blend Mode
+~~~~~~~~~~
+
+The following values are supported for the ``mode`` property on
+:ref:`json-layer`:
+
+- ``normal`` (default)
+- ``add``
+- ``multiply``
+- ``screen``
+- ``overlay``
+- ``darken``
+- ``lighten``
+- ``color-dodge``
+- ``color-burn``
+- ``hard-light``
+- ``soft-light``
+- ``difference``
+- ``exclusion``
+
+
 .. _json-chunk:
 
 Chunk
@@ -167,8 +208,8 @@ Chunks are used to store the tile layer data for
     :widths: 1, 1, 4
 
     data,             array or string,  "Array of ``unsigned int`` (GIDs) or base64-encoded data"
-    height,           int,              "Height in tiles"
-    width,            int,              "Width in tiles"
+    height,           int,              "Row count"
+    width,            int,              "Column count"
     x,                int,              "X coordinate in tiles"
     y,                int,              "Y coordinate in tiles"
 
@@ -178,11 +219,11 @@ Chunk Example
 .. code:: json
 
     {
-      "data":[1, 2, 1, 2, 3, 1, 3, 1, 2, 2, 3, 3, 4, 4, 4, 1, ...],
-      "height":16,
-      "width":16,
+      "data":[1, 2, 1, 2, 3, 1, 3, 1, 2, 2, 3, 3, 4, 4, 4, 1],
+      "height":4,
+      "width":4,
       "x":0,
-      "y":-16,
+      "y":-16
     }
 
 .. _json-object:
@@ -194,11 +235,13 @@ Object
     :header: Field, Type, Description
     :widths: 1, 1, 4
 
+    capsule,          bool,             "Used to mark an object as a capsule"
     ellipse,          bool,             "Used to mark an object as an ellipse"
     gid,              int,              "Global tile ID, only if object represents a tile"
     height,           double,           "Height in pixels."
     id,               int,              "Incremental ID, unique across all objects"
     name,             string,           "String assigned to name field in editor"
+    opacity,          double,           "The opacity of the object as a value from 0 to 1 (default: 1)"
     point,            bool,             "Used to mark an object as a point"
     polygon,          array,            "Array of :ref:`Points <json-point>`, in case the object is a polygon"
     polyline,         array,            "Array of :ref:`Points <json-point>`, in case the object is a polyline"
@@ -206,7 +249,7 @@ Object
     rotation,         double,           "Angle in degrees clockwise"
     template,         string,           "Reference to a template file, in case object is a :doc:`template instance </manual/using-templates>`"
     text,             :ref:`json-object-text`, "Only used for text objects"
-    type,             string,           "String assigned to type field in editor"
+    type,             string,           "The class of the object (was saved as ``class`` in 1.9, optional)"
     visible,          bool,             "Whether object is shown in editor."
     width,            double,           "Width in pixels."
     x,                double,           "X coordinate in pixels"
@@ -229,6 +272,7 @@ Object Example
           "value":12
         }],
       "rotation":0,
+      "opacity":1,
       "type":"npc",
       "visible":true,
       "width":0,
@@ -247,6 +291,7 @@ Ellipse Example
       "id":13,
       "name":"",
       "rotation":0,
+      "opacity":1,
       "type":"",
       "visible":true,
       "width":248,
@@ -264,6 +309,7 @@ Rectangle Example
       "id":14,
       "name":"",
       "rotation":0,
+      "opacity":1,
       "type":"",
       "visible":true,
       "width":368,
@@ -277,11 +323,12 @@ Point Example
 .. code:: json
 
     {
-      "point":true,
       "height":0,
       "id":20,
       "name":"",
+      "point":true,
       "rotation":0,
+      "opacity":1,
       "type":"",
       "visible":true,
       "width":0,
@@ -320,6 +367,7 @@ Polygon Example
         "y":-288
       }],
       "rotation":0,
+      "opacity":1,
       "type":"",
       "visible":true,
       "width":0,
@@ -362,6 +410,7 @@ Polyline Example
         "y":0
       }],
       "rotation":0,
+      "opacity":1,
       "type":"",
       "visible":true,
       "width":0,
@@ -384,6 +433,7 @@ Text Example
         "wrap":true
       },
       "rotation":0,
+      "opacity":1,
       "type":"",
       "visible":true,
       "width":248,
@@ -424,7 +474,9 @@ Tileset
     :widths: 1, 1, 4
 
     backgroundcolor,  string,           "Hex-formatted color (#RRGGBB or #AARRGGBB) (optional)"
+    class,            string,           "The class of the tileset (since 1.9, optional)"
     columns,          int,              "The number of tile columns in the tileset"
+    fillmode,         string,           "The fill mode to use when rendering tiles from this tileset (``stretch`` (default) or ``preserve-aspect-fit``) (since 1.9)"
     firstgid,         int,              "GID corresponding to the first tile in the set"
     grid,             :ref:`json-tileset-grid`, "(optional)"
     image,            string,           "Image used for tiles in this set"
@@ -441,19 +493,20 @@ Tileset
     tiledversion,     string,           "The Tiled version used to save the file"
     tileheight,       int,              "Maximum height of tiles in this set"
     tileoffset,       :ref:`json-tileset-tileoffset`, "(optional)"
+    tilerendersize,   string,           "The size to use when rendering tiles from this tileset on a tile layer (``tile`` (default) or ``grid``) (since 1.9)"
     tiles,            array,            "Array of :ref:`Tiles <json-tile>` (optional)"
     tilewidth,        int,              "Maximum width of tiles in this set"
     transformations,  :ref:`json-tileset-transformations`, "Allowed transformations (optional)"
     transparentcolor, string,           "Hex-formatted color (#RRGGBB) (optional)"
     type,             string,           "``tileset`` (for tileset files, since 1.0)"
-    version,          number,           "The JSON format version"
+    version,          string,           "The JSON format version (previously a number, saved as string since 1.6)"
     wangsets,         array,            "Array of :ref:`Wang sets <json-wangset>` (since 1.1.5)"
 
 Each tileset has a ``firstgid`` (first global ID) property which
-tells you the global ID of its first tile (the one with local 
-tile ID 0). This allows you to map the global IDs back to the 
-right tileset, and then calculate the local tile ID by 
-subtracting the ``firstgid`` from the global tile ID. The first 
+tells you the global ID of its first tile (the one with local
+tile ID 0). This allows you to map the global IDs back to the
+right tileset, and then calculate the local tile ID by
+subtracting the ``firstgid`` from the global tile ID. The first
 tileset always has a ``firstgid`` value of 1.
 
 .. _json-tileset-grid:
@@ -538,17 +591,21 @@ Tile (Definition)
 
     animation,        array,              "Array of :ref:`Frames <json-frame>`"
     id,               int,                "Local ID of the tile"
-    image,            string,             "Image representing this tile (optional)"
+    image,            string,             "Image representing this tile (optional, used for image collection tilesets)"
     imageheight,      int,                "Height of the tile image in pixels"
     imagewidth,       int,                "Width of the tile image in pixels"
+    x,                int,                "The X position of the sub-rectangle representing this tile (default: 0)"
+    y,                int,                "The Y position of the sub-rectangle representing this tile (default: 0)"
+    width,            int,                "The width of the sub-rectangle representing this tile (defaults to the image width)"
+    height,           int,                "The height of the sub-rectangle representing this tile (defaults to the image height)"
     objectgroup,      :ref:`json-layer`,  "Layer with type ``objectgroup``, when collision shapes are specified (optional)"
-    probability,      double,             "Percentage chance this tile is chosen when competing with others in the editor (optional)"
+    probability,      double,             "Percentage chance this tile is chosen when competing with others in the editor (default: 1)"
     properties,       array,              "Array of :ref:`Properties <json-property>`"
-    terrain,          array,              "Index of terrain for each corner of tile (optional)"
-    type,             string,             "The type of the tile (optional)"
+    terrain,          array,              "Index of terrain for each corner of tile (optional, replaced by :ref:`Wang sets <json-wangset>` since 1.5)"
+    type,             string,             "The class of the tile (was saved as ``class`` in 1.9, optional)"
 
 A tileset that associates information with each tile, like its image
-path or terrain type, may include a ``tiles`` array property. Each tile
+path, may include a ``tiles`` array property. Each tile
 has an ``id`` property, which specifies the local ID within the tileset.
 
 For the terrain information, each value is a length-4 array where each
@@ -560,38 +617,16 @@ Example:
 
 .. code:: json
 
-    "tiles":[
-      {
-        "id":0,
-        "properties":[
-          {
-            "name":"myProperty1",
-            "type":"string",
-            "value":"myProperty1_value"
-          }],
-        "terrain":[0, 0, 0, 0]
-      },
-      {
-        "id":11,
-        "properties":[
-          {
-            "name":"myProperty2",
-            "type":"string",
-            "value":"myProperty2_value"
-          }],
-        "terrain":[0, 1, 0, 1]
-      },
-      {
-        "id":12,
-        "properties":[
-          {
-            "name":"myProperty3",
-            "type":"string",
-            "value":"myProperty3_value"
-          }],
-        "terrain":[1, 1, 1, 1]
-      }
-    ]
+    {
+      "id":11,
+      "properties":[
+        {
+          "name":"myProperty2",
+          "type":"string",
+          "value":"myProperty2_value"
+        }],
+      "terrain":[0, 1, 0, 1]
+    }
 
 .. _json-frame:
 
@@ -622,19 +657,10 @@ Example:
 
 .. code:: json
 
-    "terrains":[
     {
       "name":"ground",
       "tile":0
-    },
-    {
-      "name":"chasm",
-      "tile":12
-    },
-    {
-      "name":"cliff",
-      "tile":36
-    }],
+    }
 
 .. _json-wangset:
 
@@ -645,10 +671,12 @@ Wang Set
     :header: Field, Type, Description
     :widths: 1, 1, 4
 
-    colors,           array,            "Array of :ref:`Wang colors <json-wangcolor>`"
+    class,            string,           "The class of the Wang set (since 1.9, optional)"
+    colors,           array,            "Array of :ref:`Wang colors <json-wangcolor>` (since 1.5)"
     name,             string,           "Name of the Wang set"
     properties,       array,            "Array of :ref:`Properties <json-property>`"
     tile,             int,              "Local ID of tile representing the Wang set"
+    type,             string,           "``corner``, ``edge`` or ``mixed`` (since 1.5)"
     wangtiles,        array,            "Array of :ref:`Wang tiles <json-wangtile>`"
 
 .. _json-wangcolor:
@@ -660,10 +688,11 @@ Wang Color
     :header: Field, Type, Description
     :widths: 1, 1, 4
 
+    class,            string,           "The class of the Wang color (since 1.9, optional)"
     color,            string,           "Hex-formatted color (#RRGGBB or #AARRGGBB)"
     name,             string,           "Name of the Wang color"
-    probability,      double,           "Probability used when randomizing"
-    properties,       array,            "Array of :ref:`Properties <json-property>`"
+    probability,      double,           "Probability used when randomizing (default: 1)"
+    properties,       array,            "Array of :ref:`Properties <json-property>` (since 1.5)"
     tile,             int,              "Local ID of tile representing the Wang color"
 
 Example:
@@ -724,8 +753,43 @@ Property
     :widths: 1, 1, 4
 
     name,             string,           "Name of the property"
-    type,             string,           "Type of the property (``string`` (default), ``int``, ``float``, ``bool``, ``color`` or ``file`` (since 0.16, with ``color`` and ``file`` added in 0.17))"
+    type,             string,           "Type of the property (``string`` (default), ``int``, ``float``, ``bool``, ``color``, ``file``, ``object``, ``class`` or ``list`` (since 0.16, with ``color`` and ``file`` added in 0.17, ``object`` added in 1.4, ``class`` added in 1.8 and ``list`` added in 1.12))"
+    propertytype,     string,           "Name of the :ref:`custom property type <custom-property-types>`, when applicable (since 1.8)"
     value,            value,            "Value of the property"
+
+When the type is ``list``, the ``value`` is an array storing each item of the
+list as an object with ``type``, ``value`` and (when applicable)
+``propertytype`` fields, like a property without a name. Class items store
+their set members as a JSON object, and list items store their values as a
+nested array.
+
+Example of a list property with a nested list:
+
+.. code:: json
+
+   {
+       "name":"list property",
+       "type":"list",
+       "value":[
+           {
+               "type":"int",
+               "value":10
+           },
+           {
+               "type":"string",
+               "value":"text"
+           },
+           {
+               "type":"list",
+               "value":[
+                   {
+                       "type":"bool",
+                       "value":true
+                   }
+               ]
+           }
+       ]
+   }
 
 .. _json-point:
 
@@ -744,11 +808,83 @@ A point on a polygon or a polyline, relative to the position of the object.
 Changelog
 ---------
 
+Tiled 1.12
+~~~~~~~~~~
+
+* Added ``mode`` property to :ref:`json-layer` to specify the blend mode to use
+  when rendering the layer.
+
+* Added ``capsule`` property to :ref:`json-object`.
+
+* Added ``opacity`` property to :ref:`json-object`.
+
+* Added ``list`` as a possible type of :ref:`json-property`. The ``value`` of
+  a list property is an array storing each item as an object with ``type``,
+  ``propertytype`` and ``value`` fields.
+
+Tiled 1.11.1
+~~~~~~~~~~~~
+
+* Added ``imageheight`` and ``imagewidth`` properties to image layers.
+
+Tiled 1.10
+~~~~~~~~~~
+
+* Renamed the ``class`` property on :ref:`json-tile` and :ref:`json-object`
+  back to ``type``, to keep compatibility with Tiled 1.8 and earlier. The
+  property remains ``class`` in other places since it could not be renamed
+  to ``type`` everywhere.
+
+Tiled 1.9
+~~~~~~~~~
+
+* Renamed the ``type`` property on :ref:`json-tile` and :ref:`json-object` to
+  ``class``.
+
+* Added ``class`` property to :ref:`json-map`, :ref:`json-tileset`,
+  :ref:`json-layer`, :ref:`json-wangset` and :ref:`json-wangcolor`.
+
+* Added ``x``, ``y``, ``width`` and ``height`` properties to :ref:`json-tile`,
+  which store the sub-rectangle of a tile's image used to represent this tile.
+  By default the entire image is used.
+
+* Added ``tilerendersize`` and ``fillmode`` properties to :ref:`json-tileset`,
+  which affect the way tiles are rendered.
+
+Tiled 1.8
+~~~~~~~~~
+
+* Added support for user-defined custom property types. A reference to the
+  type is saved as the new ``propertytype`` property of :ref:`json-property`.
+
+* The :ref:`json-property` element can now have an arbitrary JSON object as its
+  ``value``, in case the property value is a class. In this case the ``type``
+  property is set to the new value ``class``.
+
+* Added ``parallaxoriginx`` and ``parallaxoriginy`` properties to
+  :ref:`json-map`.
+
+* Added ``repeatx`` and ``repeaty`` properties to :ref:`json-layer` (applies
+  only to image layers at the moment).
+
+Tiled 1.7
+~~~~~~~~~
+
+* The :ref:`json-tile` objects in a tileset are no longer always saved with
+  increasing IDs. They are now saved in the display order, which can be changed
+  in Tiled.
+
+Tiled 1.6
+~~~~~~~~~
+
+* The ``version`` property is now written as a string ("1.6") instead of a
+  number (1.5).
+
 Tiled 1.5
 ~~~~~~~~~
 
-* Unified ``cornercolors`` and ``edgecolors`` attributes of :ref:`json-wangset`
-  as the new ``colors`` property.
+* Unified ``cornercolors`` and ``edgecolors`` properties of :ref:`json-wangset`
+  as the new ``colors`` property and added a ``type`` field.
 
 * :ref:`json-wangcolor` can now store ``properties``.
 
@@ -758,11 +894,17 @@ Tiled 1.5
 * Removed ``dflip``, ``hflip`` and ``vflip`` properties from
   :ref:`json-wangtile` (no longer supported).
 
+* Added ``parallaxx`` and ``parallaxy`` properties to the :ref:`json-layer`
+  object.
+
 Tiled 1.4
 ~~~~~~~~~
 
 * Added ``objectalignment`` to the :ref:`json-tileset` object.
+
 * Added ``tintcolor`` to the :ref:`json-layer` object.
+
+* Added ``object`` as possible type of :ref:`json-property`.
 
 Tiled 1.3
 ~~~~~~~~~
@@ -796,7 +938,7 @@ Tiled 1.2
 * Custom properties are now stored in an array instead of an object
   where the property names were the keys. Each property is now an object
   that stores the name, type and value of the property. The separate
-  ``propertytypes`` and ``tilepropertytypes`` attributes have been
+  ``propertytypes`` and ``tilepropertytypes`` properties have been
   removed.
 
 Tiled 1.1

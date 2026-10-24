@@ -20,11 +20,12 @@
 
 #include "tiledproxystyle.h"
 
-#include "utils.h"
-
 #include <QAbstractScrollArea>
 #include <QApplication>
 #include <QComboBox>
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 3)
+#include <QGroupBox>
+#endif
 #include <QMainWindow>
 #include <QPainter>
 #include <QPainterPath>
@@ -74,11 +75,11 @@ template <typename T>
 template <typename T>
         struct QConcatenable<HexString<T> >
 {
-    typedef HexString<T> type;
+    using type = HexString<T>;
     enum { ExactSize = true };
     static int size(const HexString<T> &) { return sizeof(T) * 2; }
     static inline void appendTo(const HexString<T> &str, QChar *&out) { str.write(out); }
-    typedef QString ConvertTo;
+    using ConvertTo = QString;
 };
 
 static QString uniqueName(const QString &key, const QStyleOption *option, QSize size)
@@ -126,15 +127,10 @@ static const qreal baseDpi = 96;
 
 static qreal dpi(const QStyleOption *option)
 {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
     // Expect that QStyleOption::QFontMetrics::QFont has the correct DPI set
     if (option)
         return option->fontMetrics.fontDpi();
     return baseDpi;
-#else
-    Q_UNUSED(option)
-    return Utils::defaultDpi();
-#endif
 }
 
 static qreal dpiScaled(qreal value, qreal dpi)
@@ -351,7 +347,16 @@ void TiledProxyStyle::drawPrimitive(PrimitiveElement element,
     switch (element) {
     case PE_FrameGroupBox:
     {
-        int topMargin = qMax(pixelMetric(PM_ExclusiveIndicatorHeight), option->fontMetrics.height()) + 3;
+        int topMargin = 3;
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 3)
+        auto control = qobject_cast<const QGroupBox *>(widget);
+        if (control && !control->isCheckable() && control->title().isEmpty()) {
+            // Shrinking the topMargin if Not checkable AND title is empty
+        } else {
+            topMargin += qMax(pixelMetric(PM_ExclusiveIndicatorHeight),
+                              option->fontMetrics.height());
+        }
+#endif
         QRect frame = option->rect.adjusted(0, topMargin, -1, -1);
         QColor tabFrameColor = getTabFrameColor(option->palette);
 
@@ -670,11 +675,7 @@ void TiledProxyStyle::drawControl(ControlElement element,
                     proxy()->drawItemText(painter, menuItem->rect.adjusted(margin, 0, -margin, 0), Qt::AlignLeft | Qt::AlignVCenter,
                                           menuItem->palette, menuItem->state & State_Enabled, menuItem->text,
                                           QPalette::Text);
-#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
                     w = menuItem->fontMetrics.horizontalAdvance(menuItem->text) + margin;
-#else
-                    w = menuItem->fontMetrics.width(menuItem->text) + margin;
-#endif
                 }
                 if (isDark())
                     painter->setPen(lightShade().darker(130));
@@ -795,11 +796,7 @@ void TiledProxyStyle::drawControl(ControlElement element,
             }
             int x, y, w, h;
             menuitem->rect.getRect(&x, &y, &w, &h);
-#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
             int tab = menuitem->reservedShortcutWidth;
-#else
-            int tab = menuitem->tabWidth;
-#endif
             QColor discol;
             if (dis) {
                 discol = menuitem->palette.text().color();
@@ -810,11 +807,8 @@ void TiledProxyStyle::drawControl(ControlElement element,
 
             QRect textRect(xpos, y + windowsItemVMargin, w - xm - windowsRightBorder - tab + 1, h - 2 * windowsItemVMargin);
             QRect vTextRect = visualRect(opt->direction, menuitem->rect, textRect);
-#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
             QStringView s(menuitem->text);
-#else
-            QStringRef s(&menuitem->text);
-#endif
+
             if (!s.isEmpty()) {                     // draw text
                 p->save();
                 int t = s.indexOf(QLatin1Char('\t'));
@@ -994,6 +988,12 @@ void TiledProxyStyle::drawControl(ControlElement element,
         }
         break;
 
+        // Fix the font used to draw dock widget titles (see QDockWidget::paintEvent)
+    case CE_DockWidgetTitle:
+        painter->setFont(QFont());
+        QProxyStyle::drawControl(element, option, painter, widget);
+        break;
+
     case CE_TabBarTabShape:
         painter->save();
         if (const QStyleOptionTab *tab = qstyleoption_cast<const QStyleOptionTab *>(option)) {
@@ -1129,6 +1129,18 @@ void TiledProxyStyle::drawControl(ControlElement element,
             }
         }
         break;
+
+#if defined(Q_OS_WIN)
+    case CE_ItemViewItem:
+        if (const QStyleOptionViewItem *vopt = qstyleoption_cast<const QStyleOptionViewItem *>(option)) {
+            // Work around wrong inactive HighlightedText color
+            QStyleOptionViewItem voptCopy(*vopt);
+            voptCopy.palette = mPalette;
+            QProxyStyle::drawControl(element, &voptCopy, painter, widget);
+        }
+        break;
+#endif
+
     default:
         QProxyStyle::drawControl(element, option, painter, widget);
         break;

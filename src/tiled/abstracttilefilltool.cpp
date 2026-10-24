@@ -21,11 +21,12 @@
 #include "abstracttilefilltool.h"
 #include "brushitem.h"
 #include "mapdocument.h"
-#include "staggeredrenderer.h"
 #include "stampactions.h"
+#include "wangbrush.h"
 #include "wangfiller.h"
 
 #include <QAction>
+#include <QUndoStack>
 
 using namespace Tiled;
 
@@ -33,40 +34,50 @@ AbstractTileFillTool::AbstractTileFillTool(Id id,
                                            const QString &name,
                                            const QIcon &icon,
                                            const QKeySequence &shortcut,
-                                           BrushItem *brushItem,
                                            QObject *parent)
-    : AbstractTileTool(id, name, icon, shortcut, brushItem, parent)
+    : AbstractTileTool(id, name, icon, shortcut,
+                       new WangBrushItem,
+                       parent)
     , mFillMethod(TileFill)
     , mStampActions(new StampActions(this))
     , mWangSet(nullptr)
     , mRandomAndMissingCacheValid(true)
 {
+    setUsesSelectedTiles(true);
+
     connect(mStampActions->random(), &QAction::toggled, this, &AbstractTileFillTool::randomChanged);
     connect(mStampActions->wangFill(), &QAction::toggled, this, &AbstractTileFillTool::wangFillChanged);
 
-    connect(mStampActions->flipHorizontal(), &QAction::triggered,
+    connect(mStampActions->flipHorizontal(), &QAction::triggered, this,
             [this] { emit stampChanged(mStamp.flipped(FlipHorizontally)); });
-    connect(mStampActions->flipVertical(), &QAction::triggered,
+    connect(mStampActions->flipVertical(), &QAction::triggered, this,
             [this] { emit stampChanged(mStamp.flipped(FlipVertically)); });
-    connect(mStampActions->rotateLeft(), &QAction::triggered,
+    connect(mStampActions->rotateLeft(), &QAction::triggered, this,
             [this] { emit stampChanged(mStamp.rotated(RotateLeft)); });
-    connect(mStampActions->rotateRight(), &QAction::triggered,
+    connect(mStampActions->rotateRight(), &QAction::triggered, this,
             [this] { emit stampChanged(mStamp.rotated(RotateRight)); });
 }
 
-AbstractTileFillTool::~AbstractTileFillTool()
+AbstractTileFillTool::~AbstractTileFillTool() = default;
+
+void AbstractTileFillTool::activate(MapScene *scene)
 {
+    AbstractTileTool::activate(scene);
+    mStampActions->setEnabled(true);
 }
 
 void AbstractTileFillTool::deactivate(MapScene *scene)
 {
     mCaptureStampHelper.reset();
+    mStampActions->setEnabled(false);
     AbstractTileTool::deactivate(scene);
 }
 
 void AbstractTileFillTool::mousePressed(QGraphicsSceneMouseEvent *event)
 {
-    if (event->button() == Qt::RightButton && event->modifiers() == Qt::NoModifier) {
+    if (event->button() == Qt::RightButton &&
+        !(event->modifiers() & Qt::ControlModifier))
+    {
         mCaptureStampHelper.beginCapture(tilePosition());
         return;
     }
@@ -79,7 +90,8 @@ void AbstractTileFillTool::mouseReleased(QGraphicsSceneMouseEvent *event)
     if (event->button() == Qt::RightButton && mCaptureStampHelper.isActive()) {
         clearOverlay();
 
-        TileStamp stamp = mCaptureStampHelper.endCapture(*mapDocument(), tilePosition());
+        const bool cut = event->modifiers() & Qt::ShiftModifier;
+        TileStamp stamp = mCaptureStampHelper.endCapture(*mapDocument(), tilePosition(), cut);
         if (!stamp.isEmpty())
             emit stampChanged(stamp);
 
@@ -184,9 +196,9 @@ void AbstractTileFillTool::updatePreview(const QRegion &fillRegion)
     }
 
     mFillBounds = fillRegion.boundingRect();
-    auto preview = SharedMap::create(mapDocument()->map()->orientation(),
-                                     mapDocument()->map()->size(),
-                                     mapDocument()->map()->tileSize());
+    auto preview = SharedMap::create(mapDocument()->map()->parameters());
+
+    static_cast<WangBrushItem*>(brushItem())->setInvalidTiles(QRegion());
 
     switch (mFillMethod) {
     case TileFill:
@@ -221,9 +233,24 @@ void AbstractTileFillTool::updatePreview(const QRegion &fillRegion)
     mPreviewMap = preview;
 }
 
+bool AbstractTileFillTool::applyPreview(const QString &text)
+{
+    auto preview = mPreviewMap;
+    if (!preview)
+        return false;
+
+    auto undoStack = mapDocument()->undoStack();
+    undoStack->beginMacro(text);
+    mapDocument()->paintTileLayers(*preview, false, &mMissingTilesets);
+    undoStack->endMacro();
+    return true;
+}
+
 void AbstractTileFillTool::clearOverlay()
 {
     brushItem()->clear();
+    static_cast<WangBrushItem*>(brushItem())->setInvalidTiles(QRegion());
+
     mPreviewMap.clear();
 }
 
@@ -237,13 +264,13 @@ void AbstractTileFillTool::updateRandomListAndMissingTilesets()
 
     if (mFillMethod == WangFill) {
         if (mWangSet) {
-            const SharedTileset &tileset = mWangSet->tileset()->sharedPointer();
+            const SharedTileset &tileset = mWangSet->tileset()->sharedFromThis();
             if (!mapDocument()->map()->tilesets().contains(tileset))
                 mMissingTilesets.append(tileset);
         }
     } else {
         for (const TileStampVariation &variation : mStamp.variations()) {
-            mapDocument()->unifyTilesets(variation.map, mMissingTilesets);
+            mapDocument()->unifyTilesets(*variation.map, mMissingTilesets);
             if (mFillMethod == RandomFill) {
                 for (auto layer : variation.map->tileLayers()) {
                     for (const Cell &cell : *static_cast<TileLayer*>(layer)) {
@@ -263,12 +290,7 @@ void AbstractTileFillTool::randomFill(TileLayer &tileLayer, const QRegion &regio
 
     const auto localRegion = region.translated(-tileLayer.position());
 
-#if QT_VERSION < 0x050800
-    const auto rects = localRegion.rects();
-    for (const QRect &rect : rects) {
-#else
     for (const QRect &rect : localRegion) {
-#endif
         for (int y = rect.top(); y <= rect.bottom(); ++y) {
             for (int x = rect.left(); x <= rect.right(); ++x) {
                 tileLayer.setCell(x, y,
@@ -285,9 +307,11 @@ void AbstractTileFillTool::wangFill(TileLayer &tileLayerToFill,
     if (!mWangSet)
         return;
 
-    WangFiller wangFiller(*mWangSet, mapDocument()->renderer());
+    WangFiller wangFiller(*mWangSet, backgroundTileLayer, mapDocument()->renderer());
+    wangFiller.setRegion(region);
+    wangFiller.apply(tileLayerToFill);
 
-    wangFiller.fillRegion(tileLayerToFill, backgroundTileLayer, region);
+    static_cast<WangBrushItem*>(brushItem())->setInvalidTiles(wangFiller.invalidRegion());
 }
 
 void AbstractTileFillTool::fillWithStamp(Map &map,
@@ -297,26 +321,43 @@ void AbstractTileFillTool::fillWithStamp(Map &map,
     if (stamp.isEmpty())
         return;
 
-    const QSize size = stamp.maxSize();
-    if (size.isEmpty())
-        return;
-
     const QRect bounds = mask.boundingRect();
+    const auto randomVariations = stamp.randomVariations();
+
+    QHash<QString, QList<TileLayer*>> targetLayersByName;
 
     // Fill the entire map with random variations of the stamp
-    for (int y = 0; y < bounds.height(); y += size.height()) {
-        for (int x = 0; x < bounds.width(); x += size.width()) {
-            const Map *stampMap = stamp.randomVariation().map;
+    for (int y = 0; y < bounds.height();) {
+        int maxHeight = 1;
 
-            for (Layer *layer : stampMap->tileLayers()) {
-                TileLayer *target = static_cast<TileLayer*>(map.findLayer(layer->name(), Layer::TileLayerType));
-                if (!target) {
+        for (int x = 0; x < bounds.width();) {
+            const Map *stampMap = randomVariations.pick();
+            maxHeight = qMax(maxHeight, stampMap->height());
+
+            QHash<QString, int> targetLayersIndices;
+
+            for (const Layer *layer : stampMap->tileLayers()) {
+                auto &targetLayerIndex = targetLayersIndices[layer->name()];
+                auto &targetLayers = targetLayersByName[layer->name()];
+                TileLayer *target = nullptr;
+
+                if (targetLayerIndex < targetLayers.size()) {
+                    target = targetLayers[targetLayerIndex];
+                } else {
                     target = new TileLayer(layer->name(), bounds.topLeft(), bounds.size());
+                    targetLayers.append(target);
                     map.addLayer(target);
                 }
-                target->setCells(x, y, static_cast<TileLayer*>(layer));
+
+                ++targetLayerIndex;
+
+                target->setCells(x, y, static_cast<const TileLayer*>(layer));
             }
+
+            x += qMax(1, stampMap->width());
         }
+
+        y += maxHeight;
     }
 
     // Erase tiles outside of the masked region. This can easily be faster than

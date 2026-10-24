@@ -20,6 +20,7 @@
 
 #include "tilesetdocument.h"
 
+#include "changeevents.h"
 #include "editabletileset.h"
 #include "issuesmodel.h"
 #include "map.h"
@@ -32,6 +33,7 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QQmlEngine>
 #include <QUndoStack>
 
 namespace Tiled {
@@ -64,6 +66,13 @@ TilesetDocument::TilesetDocument(const SharedTileset &tileset)
 {
     Q_ASSERT(!sTilesetToDocument.contains(tileset));
     sTilesetToDocument.insert(tileset, this);
+
+    // If there already happens to be an editable for this tileset, take
+    // ownership of it.
+    if (auto editable = EditableTileset::find(tileset.data())) {
+        setEditable(std::unique_ptr<EditableAsset>(editable));
+        QQmlEngine::setObjectOwnership(editable, QQmlEngine::CppOwnership);
+    }
 
     mCurrentObject = tileset.data();
 
@@ -98,7 +107,7 @@ bool TilesetDocument::save(const QString &fileName, QString *error)
     auto tilesetFormat = findFileFormat<TilesetFormat>(mTileset->format(), FileFormat::Write);;
     if (!tilesetFormat) {
         if (error)
-            *error = tr("Tileset format '%s' not found").arg(mTileset->format());
+            *error = tr("Tileset format '%1' not found").arg(mTileset->format());
         return false;
     }
 
@@ -249,21 +258,21 @@ void TilesetDocument::swapTileset(SharedTileset &tileset)
     // Bring pointers to safety
     setSelectedTiles(QList<Tile*>());
     setCurrentObject(mTileset.data());
-    mEditable.reset();
+    mWangColorModels.clear();
+
+    emit changed(AboutToReloadEvent());
 
     sTilesetToDocument.remove(mTileset);
     mTileset->swap(*tileset);
     sTilesetToDocument.insert(mTileset, this);
 
+    emit changed(ReloadEvent());
     emit tilesetChanged(mTileset.data());
 }
 
-EditableTileset *TilesetDocument::editable()
+std::unique_ptr<EditableAsset> TilesetDocument::createEditable()
 {
-    if (!mEditable)
-        mEditable.reset(new EditableTileset(this, this));
-
-    return static_cast<EditableTileset*>(mEditable.get());
+    return std::make_unique<EditableTileset>(this, this);
 }
 
 /**
@@ -342,21 +351,36 @@ void TilesetDocument::removeTiles(const QList<Tile *> &tiles)
         }
     }
 
+    emit changed(TilesEvent(ChangeEvent::TilesAboutToBeRemoved, tiles));
     mTileset->removeTiles(tiles);
     emit tilesRemoved(tiles);
     emit tilesetChanged(mTileset.data());
+}
+
+/**
+ * \sa Tileset::relocateTiles
+ */
+QList<int> TilesetDocument::relocateTiles(const QList<Tile *> &tiles, int location)
+{
+    const auto prevLocations = mTileset->relocateTiles(tiles, location);
+    emit tilesetChanged(mTileset.data());
+    return prevLocations;
 }
 
 void TilesetDocument::setSelectedTiles(const QList<Tile*> &selectedTiles)
 {
     mSelectedTiles = selectedTiles;
     emit selectedTilesChanged();
+
+    if (currentObject() && currentObject()->typeId() == Object::TileType)
+        emit currentObjectsChanged();
 }
 
 QList<Object *> TilesetDocument::currentObjects() const
 {
     if (mCurrentObject->typeId() == Object::TileType && !mSelectedTiles.isEmpty()) {
         QList<Object*> objects;
+        objects.reserve(mSelectedTiles.size());
         for (Tile *tile : mSelectedTiles)
             objects.append(tile);
         return objects;
@@ -379,18 +403,9 @@ WangColorModel *TilesetDocument::wangColorModel(WangSet *wangSet)
     return model.get();
 }
 
-void TilesetDocument::setTileType(Tile *tile, const QString &type)
-{
-    Q_ASSERT(tile->tileset() == mTileset.data());
-
-    tile->setType(type);
-    emit tileTypeChanged(tile);
-
-    for (MapDocument *mapDocument : mapDocuments())
-        emit mapDocument->tileTypeChanged(tile);
-}
-
-void TilesetDocument::setTileImage(Tile *tile, const QPixmap &image, const QUrl &source)
+void TilesetDocument::setTileImage(Tile *tile,
+                                   const QPixmap &image,
+                                   const QUrl &source)
 {
     Q_ASSERT(tile->tileset() == mTileset.data());
 
@@ -481,9 +496,6 @@ void TilesetDocument::onPropertiesChanged(Object *object)
 
 void TilesetDocument::onWangSetRemoved(WangSet *wangSet)
 {
-    if (wangSet == mCurrentObject)
-        setCurrentObject(nullptr);
-
     mWangColorModels.erase(wangSet);
 }
 

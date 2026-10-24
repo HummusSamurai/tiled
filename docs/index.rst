@@ -3,8 +3,8 @@ Tiled Documentation
 
 .. note::
 
-   If you're not finding what you're looking for in these pages, please don't
-   hesitate to ask questions on the `Tiled Forum <http://discourse.mapeditor.org>`_
+   If you're not finding what you're looking for on these pages, please don't
+   hesitate to ask questions on the `Tiled Forum <https://discourse.mapeditor.org>`_
    or the `Tiled Discord <https://discord.gg/39wbTv7>`_.
 
 .. toctree::
@@ -13,6 +13,7 @@ Tiled Documentation
 
    manual/introduction
    manual/projects
+   manual/maps
    manual/layers
    manual/editing-tile-layers
    manual/objects
@@ -27,7 +28,7 @@ Tiled Documentation
    manual/export
    manual/keyboard-shortcuts
    manual/preferences
-   manual/python
+   manual/scripting
 
 .. toctree::
    :maxdepth: 2
@@ -37,4 +38,4 @@ Tiled Documentation
    reference/tmx-map-format
    reference/tmx-changelog
    reference/json-map-format
-   reference/scripting
+   reference/global-tile-ids

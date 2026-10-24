@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include "imagelayer.h"
+#include "map.h"
 #include "mapobject.h"
+#include "tileset.h"
+#include "wangset.h"
 
 #include <QList>
 
@@ -33,8 +37,13 @@ class ChangeEvent
 {
 public:
     enum Type {
+        DocumentAboutToReload,
+        DocumentReloaded,
+        ObjectsChanged,
+        MapChanged,
         LayerChanged,
         TileLayerChanged,
+        ImageLayerChanged,
         MapObjectAboutToBeAdded,
         MapObjectAboutToBeRemoved,
         MapObjectAdded,
@@ -44,13 +53,69 @@ public:
         MapObjectsChanged,
         MapObjectsRemoved,
         ObjectGroupChanged,
+        TilesAboutToBeRemoved,
+        TilesetChanged,
+        WangSetAboutToBeAdded,
+        WangSetAboutToBeRemoved,
+        WangSetAdded,
+        WangSetRemoved,
         WangSetChanged,
+        WangColorAboutToBeRemoved,
+        WangColorChanged,
     } type;
 
 protected:
     ChangeEvent(Type type)
         : type(type)
     {}
+
+    // not virtual, but protected to avoid calling at this level
+    ~ChangeEvent()
+    {}
+};
+
+class AboutToReloadEvent : public ChangeEvent
+{
+public:
+    AboutToReloadEvent()
+        : ChangeEvent(DocumentAboutToReload)
+    {}
+};
+
+class ReloadEvent : public ChangeEvent
+{
+public:
+    ReloadEvent()
+        : ChangeEvent(DocumentReloaded)
+    {}
+};
+
+class ObjectsChangeEvent : public ChangeEvent
+{
+public:
+    enum ObjectProperty {
+        ClassProperty           = 1 << 0,
+    };
+
+    ObjectsChangeEvent(const QList<Object *> &objects, int properties)
+        : ChangeEvent(ObjectsChanged)
+        , objects(objects)
+        , properties(properties)
+    {}
+
+    QList<Object *> objects;
+    int properties;
+};
+
+class MapChangeEvent : public ChangeEvent
+{
+public:
+    MapChangeEvent(Map::Property property)
+        : ChangeEvent(MapChanged)
+        , property(property)
+    {}
+
+    Map::Property property;
 };
 
 class LayerChangeEvent : public ChangeEvent
@@ -63,7 +128,8 @@ public:
         LockedProperty          = 1 << 3,
         OffsetProperty          = 1 << 4,
         ParallaxFactorProperty  = 1 << 5,
-        TintColorProperty       = 1 << 6,
+        BlendModeProperty       = 1 << 6,
+        TintColorProperty       = 1 << 7,
         PositionProperties      = OffsetProperty | ParallaxFactorProperty,
         AllProperties           = 0xFF
     };
@@ -87,14 +153,30 @@ class TileLayerChangeEvent : public LayerChangeEvent
 {
 public:
     enum TileLayerProperty {
-        SizeProperty            = 1 << 5,
+        SizeProperty            = 1 << 7,
     };
 
     TileLayerChangeEvent(TileLayer *tileLayer, int properties)
         : LayerChangeEvent(TileLayerChanged, tileLayer, properties)
     {}
 
-    TileLayer *tileLayer() { return static_cast<TileLayer*>(layer); }
+    TileLayer *tileLayer() const { return static_cast<TileLayer*>(layer); }
+};
+
+class ImageLayerChangeEvent : public LayerChangeEvent
+{
+public:
+    enum ImageLayerProperty {
+        TransparentColorProperty    = 1 << 7,
+        ImageSourceProperty         = 1 << 8,
+        RepeatProperty              = 1 << 9,
+    };
+
+    ImageLayerChangeEvent(ImageLayer *imageLayer, int properties)
+        : LayerChangeEvent(ImageLayerChanged, imageLayer, properties)
+    {}
+
+    ImageLayer *imageLayer() const { return static_cast<ImageLayer*>(layer); }
 };
 
 class ObjectGroupChangeEvent : public ChangeEvent
@@ -156,21 +238,94 @@ public:
     int index;
 };
 
+class TilesetChangeEvent : public ChangeEvent
+{
+public:
+    TilesetChangeEvent(Tileset *tileset, Tileset::Property property)
+        : ChangeEvent(TilesetChanged)
+        , tileset(tileset)
+        , property(property)
+    {}
+
+    Tileset *tileset;
+    Tileset::Property property;
+};
+
+class TilesEvent : public ChangeEvent
+{
+public:
+    TilesEvent(Type type, QList<Tile *> tiles)
+        : ChangeEvent(type)
+        , tiles(std::move(tiles))
+    {}
+
+    QList<Tile *> tiles;
+};
+
+class WangSetEvent : public ChangeEvent
+{
+public:
+    WangSetEvent(Type type, Tileset *tileset, int index)
+        : ChangeEvent(type)
+        , tileset(tileset)
+        , index(index)
+    {}
+
+    Tileset *tileset;
+    int index;
+};
+
 class WangSetChangeEvent : public ChangeEvent
 {
 public:
     enum WangSetProperty {
-        TypeProperty            = 1 << 0,
+        NameProperty,
+        TypeProperty,
+        ImageProperty,
+        ColorCountProperty,
     };
 
-    WangSetChangeEvent(WangSet *wangSet, int properties)
+    WangSetChangeEvent(WangSet *wangSet, WangSetProperty property)
         : ChangeEvent(WangSetChanged)
         , wangSet(wangSet)
-        , properties(properties)
+        , property(property)
     {}
 
     WangSet *wangSet;
-    int properties;
+    WangSetProperty property;
+};
+
+class WangColorEvent : public ChangeEvent
+{
+public:
+    WangColorEvent(Type type, WangSet *wangSet, int color)
+        : ChangeEvent(type)
+        , wangSet(wangSet)
+        , color(color)
+    {}
+
+    WangSet *wangSet;
+    int color;
+};
+
+class WangColorChangeEvent : public ChangeEvent
+{
+public:
+    enum WangColorProperty {
+        NameProperty,
+        ColorProperty,
+        ImageProperty,
+        ProbabilityProperty,
+    };
+
+    WangColorChangeEvent(WangColor *wangColor, WangColorProperty property)
+        : ChangeEvent(WangColorChanged)
+        , wangColor(wangColor)
+        , property(property)
+    {}
+
+    WangColor *wangColor;
+    WangColorProperty property;
 };
 
 } // namespace Tiled

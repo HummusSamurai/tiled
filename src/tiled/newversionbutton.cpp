@@ -22,8 +22,10 @@
 
 #include "newversiondialog.h"
 #include "preferences.h"
+#include "tiledapplication.h"
 #include "utils.h"
 
+#include <QEvent>
 #include <QGuiApplication>
 
 namespace Tiled {
@@ -43,7 +45,7 @@ NewVersionButton::NewVersionButton(NewVersionButton::Visibility visibility, QWid
     setText(tr("Up to date"));
     setEnabled(false);
 
-    const auto &checker = NewVersionChecker::instance();
+    const auto &checker = tiledApp()->newVersionChecker();
 
     connect(&checker, &NewVersionChecker::newVersionAvailable,
             this, &NewVersionButton::newVersionAvailable);
@@ -64,6 +66,26 @@ NewVersionButton::NewVersionButton(NewVersionButton::Visibility visibility, QWid
     connect(this, &QToolButton::clicked, this, [this, &checker] {
         NewVersionDialog(checker.versionInfo(), window()).exec();
     });
+}
+
+void NewVersionButton::changeEvent(QEvent *event)
+{
+    QToolButton::changeEvent(event);
+
+    if (event->type() == QEvent::LanguageChange)
+        retranslateUi();
+}
+
+void NewVersionButton::retranslateUi()
+{
+    const auto &checker = tiledApp()->newVersionChecker();
+
+    if (checker.isNewVersionAvailable())
+        newVersionAvailable(checker.versionInfo());
+    else if (!checker.errorString().isEmpty())
+        errorStringChanged(checker.errorString());
+    else
+        setText(tr("Up to date"));
 }
 
 void NewVersionButton::newVersionAvailable(const NewVersionChecker::VersionInfo &versionInfo)
@@ -95,7 +117,7 @@ void NewVersionButton::updateVisiblity()
         return;
 
     const auto preferences = Preferences::instance();
-    const auto &checker = NewVersionChecker::instance();
+    const auto &checker = tiledApp()->newVersionChecker();
 
     setVisible(preferences->checkForUpdates() && checker.isNewVersionAvailable());
 }

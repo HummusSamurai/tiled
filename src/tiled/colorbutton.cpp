@@ -20,9 +20,9 @@
 
 #include "colorbutton.h"
 
-#include <QColorDialog>
+#include "utils.h"
+
 #include <QEvent>
-#include <QPainter>
 #include <QStyle>
 
 using namespace Tiled;
@@ -30,7 +30,7 @@ using namespace Tiled;
 ColorButton::ColorButton(QWidget *parent)
     : QToolButton(parent)
 {
-    int defaultIconSize = style()->pixelMetric(QStyle::PM_ButtonIconSize);
+    const int defaultIconSize = style()->pixelMetric(QStyle::PM_ButtonIconSize);
     setIconSize(QSize(defaultIconSize * 2, defaultIconSize));
     setColor(Qt::white);
 
@@ -39,7 +39,7 @@ ColorButton::ColorButton(QWidget *parent)
 
 void ColorButton::setColor(const QColor &color)
 {
-    if (mColor == color || !color.isValid())
+    if (mColor == color)
         return;
 
     mColor = color;
@@ -55,7 +55,7 @@ void ColorButton::changeEvent(QEvent *e)
 
     switch (e->type()) {
     case QEvent::StyleChange: {
-        int defaultIconSize = style()->pixelMetric(QStyle::PM_ButtonIconSize);
+        const int defaultIconSize = style()->pixelMetric(QStyle::PM_ButtonIconSize);
         setIconSize(QSize(defaultIconSize * 2, defaultIconSize));
         updateIcon();
         break;
@@ -67,27 +67,17 @@ void ColorButton::changeEvent(QEvent *e)
 
 void ColorButton::pickColor()
 {
-    QColor newColor = QColorDialog::getColor(mColor, this);
+    const QColor newColor = QColorDialog::getColor(mColor, this, QString(),
+                                                   mDialogOptions);
     if (newColor.isValid())
         setColor(newColor);
 }
 
 void ColorButton::updateIcon()
 {
-    QSize size(iconSize());
-    size.rwidth() -= 2;
-    size.rheight() -= 2;
-
-    QPixmap pixmap(size);
-    pixmap.fill(mColor);
-
-    QPainter painter(&pixmap);
-    QColor border(Qt::black);
-    border.setAlpha(128);
-    painter.setPen(border);
-    painter.drawRect(0, 0, pixmap.width() - 1, pixmap.height() - 1);
-
-    setIcon(QIcon(pixmap));
+    // todo: fix gray icon in disabled state (consider using opacity, and not using an icon at all)
+    setIcon(mColor.isValid() ? Utils::colorIcon(mColor, iconSize()) : QIcon());
+    setText(mColor.isValid() ? QString() : tr("Not set"));
 }
 
 #include "moc_colorbutton.cpp"

@@ -2,8 +2,8 @@
  * #%L
  * libtiled
  * %%
- * Copyright (C) 2004 - 2017 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
- * Copyright (C) 2016 - 2017 Mike Thomas <mikepthomas@outlook.com>
+ * Copyright (C) 2004 - 2020 Thorbjørn Lindeijer <thorbjorn@lindeijer.nl>
+ * Copyright (C) 2016 - 2020 Mike Thomas <mikepthomas@outlook.com>
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -36,10 +36,11 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.zip.InflaterInputStream;
 
-import javax.xml.bind.DatatypeConverter;
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.Marshaller;
+import java.util.Base64;
+
+import jakarta.xml.bind.JAXBContext;
+import jakarta.xml.bind.JAXBException;
+import jakarta.xml.bind.Marshaller;
 import javax.xml.stream.XMLStreamException;
 
 import org.junit.Test;
@@ -63,13 +64,13 @@ public class JaxbTest {
         MapReader reader = new MapReader();
         Map map = reader.readMap(url.getFile());
 
-        assertEquals("1.2", map.getVersion());
+        assertEquals("1.4", map.getVersion());
 
         TileLayer layer = (TileLayer) map.getLayers().get(0);
         Data data = layer.getData();
         if (Compression.ZLIB.equals(data.getCompression())) {
             String enc = data.getValue();
-            byte[] dec = DatatypeConverter.parseBase64Binary(enc);
+            byte[] dec = Base64.getDecoder().decode(enc);
             InputStream bais = new ByteArrayInputStream(dec);
             InputStream is = new InflaterInputStream(bais);
 

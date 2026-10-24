@@ -29,7 +29,9 @@
 #pragma once
 
 #include "properties.h"
-#include "objecttypes.h"
+#include "propertytype.h"
+
+#include <QPointer>
 
 namespace Tiled {
 
@@ -39,18 +41,23 @@ namespace Tiled {
 class TILEDSHARED_EXPORT Object
 {
 public:
+    // Keep values synchronized with ClassPropertyType::ClassUsageFlag
     enum TypeId {
-        LayerType,
-        MapObjectType,
-        MapType,
-        ObjectTemplateType,
-        TilesetType,
-        TileType,
-        WangSetType,
-        WangColorType
+        LayerType           = 0x002,
+        MapObjectType       = 0x004,
+        MapType             = 0x008,
+        TilesetType         = 0x010,
+        TileType            = 0x020,
+        WangSetType         = 0x040,
+        WangColorType       = 0x080,
+        ProjectType         = 0x100,
+        WorldType           = 0x200,
     };
 
-    explicit Object(TypeId typeId) : mTypeId(typeId) {}
+    explicit Object(TypeId typeId, const QString &className = QString())
+        : mTypeId(typeId)
+        , mClassName(className)
+    {}
 
     /**
      * Virtual destructor.
@@ -62,10 +69,20 @@ public:
      */
     TypeId typeId() const { return mTypeId; }
 
+    const QString &className() const;
+    void setClassName(const QString &className);
+
+    const ClassPropertyType *classType() const;
+
     /**
      * Returns the properties of this object.
      */
     const Properties &properties() const { return mProperties; }
+
+    /**
+     * Returns the properties of this object.
+     */
+    Properties &properties() { return mProperties; }
 
     /**
      * Replaces all existing properties with a new set of properties.
@@ -96,6 +113,7 @@ public:
 
     QVariant resolvedProperty(const QString &name) const;
     QVariantMap resolvedProperties() const;
+    QVariantMap inheritedProperties() const;
 
     /**
      * Returns the value of the object's \a name property, as a string.
@@ -108,9 +126,11 @@ public:
 
     /**
      * Returns the type of the object's \a name property, as a string.
+     *
+     * This function exists only for the Python plugin.
      */
     QString propertyType(const QString &name) const
-    { return typeToName(mProperties.value(name).userType()); }
+    { return typeName(mProperties.value(name)); }
 
     /**
      * Returns whether this object has a property with the given \a name.
@@ -125,6 +145,18 @@ public:
     { mProperties.insert(name, value); }
 
     /**
+     * Sets the value of an object's property identified the given \a path
+     * to \a value.
+     *
+     * The \a path is a list of property names, where each name identifies
+     * a member of the previous member's value. The last name in the list
+     * identifies the property to set.
+     *
+     * Returns whether the property was set.
+     */
+    bool setProperty(const PropertyPath &path, const QVariant &value);
+
+    /**
      * Removes the property with the given \a name.
      */
     void removeProperty(const QString &name)
@@ -132,17 +164,39 @@ public:
 
     bool isPartOfTileset() const;
 
-    static void setObjectTypes(const ObjectTypes &objectTypes);
-    static const ObjectTypes &objectTypes()
-    { return mObjectTypes; }
+    static void setPropertyTypes(const SharedPropertyTypes &propertyTypes);
+    static const PropertyTypes &propertyTypes();
 
 private:
     const TypeId mTypeId;
+    QString mClassName;
     Properties mProperties;
 
-    static ObjectTypes mObjectTypes;
+    /**
+     * The editable wrapper created for this object.
+     */
+    QPointer<QObject> mEditable;
+    friend class EditableObject;
+
+    static SharedPropertyTypes mPropertyTypes;
 };
 
+
+/**
+ * Returns the class of this object. The class usually says something about
+ * how the object is meant to be interpreted by the engine.
+ *
+ * Tile objects that do not have a class explicitly set on them are assumed to
+ * be of the class set on their tile (see MapObject::effectiveClassName).
+ */
+inline const QString &Object::className() const
+{ return mClassName; }
+
+/**
+ * Sets the class of this object.
+ */
+inline void Object::setClassName(const QString &className)
+{ mClassName = className; }
 
 /**
  * Returns whether this object is stored as part of a tileset.

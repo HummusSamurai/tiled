@@ -1,5 +1,3 @@
-import qbs 1.0
-
 Product {
     name: "translations"
     type: "qm"
@@ -10,7 +8,6 @@ Product {
         "tiled_hi.ts",
         "tiled_lv.ts",
         "tiled_mr.ts",
-        "tiled_th.ts",
     ]
 
     Depends { name: "Qt.core" }
@@ -19,7 +16,7 @@ Product {
         fileTagsFilter: product.type
         qbs.install: true
         qbs.installDir: {
-            if (qbs.targetOS.contains("windows") || project.linuxArchive)
+            if (project.windowsLayout)
                 return "translations"
             else if (qbs.targetOS.contains("macos"))
                 return "Tiled.app/Contents/Translations"

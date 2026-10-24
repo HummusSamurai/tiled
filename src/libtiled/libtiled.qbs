@@ -1,44 +1,85 @@
-import qbs 1.0
+import qbs.Probes as Probes
 
 DynamicLibrary {
     targetName: "tiled"
+    cpp.dynamicLibraryPrefix: "lib"
 
     Depends { name: "cpp" }
-    Depends { name: "Qt"; submodules: "gui"; versionAtLeast: "5.6" }
+    Depends { name: "Qt"; submodules: "gui"; versionAtLeast: "6.2.0" }
 
-    Properties {
-        condition: !qbs.toolchain.contains("msvc")
-        cpp.dynamicLibraries: base.concat(["z"])
+    Probes.PkgConfigProbe {
+        id: pkgConfigZstd
+        name: "libzstd"
+        forStaticBuild: project.staticZstd
     }
 
-    cpp.cxxLanguageVersion: "c++14"
+    cpp.cxxLanguageVersion: "c++17"
+    cpp.cxxFlags: {
+        var flags = base;
+
+        if (pkgConfigZstd.found)
+            flags = flags.concat(pkgConfigZstd.cflags);
+
+        return flags;
+    }
     cpp.visibility: "minimal"
     cpp.defines: {
         var defs = [
             "TILED_LIBRARY",
+            "TILED_LIB_DIR=\"" + project.libDir + "\"",
             "QT_NO_CAST_FROM_ASCII",
             "QT_NO_CAST_TO_ASCII",
             "QT_NO_URL_CAST_FROM_STRING",
+            "QT_DISABLE_DEPRECATED_BEFORE=0x050F00",
+            "QT_NO_DEPRECATED_WARNINGS",
             "_USE_MATH_DEFINES",
         ]
 
-        if (project.enableZstd)
+        if (project.staticZstd || pkgConfigZstd.found)
             defs.push("TILED_ZSTD_SUPPORT");
+
+        if (project.windowsLayout)
+            defs.push("TILED_WINDOWS_LAYOUT");
 
         return defs;
     }
+    cpp.dynamicLibraries: {
+        var libs = base;
 
-    cpp.includePaths: [ "../../zstd/lib" ]
+        if (!qbs.toolchain.contains("msvc"))
+            libs.push("z");
 
-    Properties {
-        condition: qbs.targetOS.contains("macos")
-        cpp.cxxFlags: ["-Wno-unknown-pragmas"]
+        if (pkgConfigZstd.found && !project.staticZstd)
+            libs = libs.concat(pkgConfigZstd.libraries);
+
+        return libs;
+    }
+    cpp.staticLibraries: {
+        var libs = base;
+
+        if (project.staticZstd) {
+            if (pkgConfigZstd.found)
+                libs = libs.concat(pkgConfigZstd.libraries);
+            else
+                libs.push("zstd");
+        }
+
+        return libs;
     }
 
     Properties {
-        condition: project.enableZstd
-        cpp.staticLibraries: ["zstd"]
-        cpp.libraryPaths: ["../../zstd/lib"]
+        condition: pkgConfigZstd.found
+        cpp.libraryPaths: pkgConfigZstd.libraryPaths
+        cpp.linkerFlags: pkgConfigZstd.linkerFlags
+    }
+
+    // When libzstd was not found but staticZstd is enabled, assume that zstd
+    // has been compiled in a "zstd" directory at the repository root (this is
+    // done by the autobuilds for Windows and macOS).
+    Properties {
+        condition: !pkgConfigZstd.found && project.staticZstd
+        cpp.libraryPaths: "../../zstd/lib"
+        cpp.includePaths: "../../zstd/lib"
     }
 
     Properties {
@@ -92,6 +133,8 @@ DynamicLibrary {
         "mapwriter.h",
         "minimaprenderer.cpp",
         "minimaprenderer.h",
+        "obliquerenderer.cpp",
+        "obliquerenderer.h",
         "object.cpp",
         "object.h",
         "objectgroup.cpp",
@@ -110,6 +153,8 @@ DynamicLibrary {
         "pluginmanager.h",
         "properties.cpp",
         "properties.h",
+        "propertytype.cpp",
+        "propertytype.h",
         "savefile.cpp",
         "savefile.h",
         "staggeredrenderer.cpp",
@@ -131,19 +176,28 @@ DynamicLibrary {
         "tilesetformat.h",
         "tilesetmanager.cpp",
         "tilesetmanager.h",
+        "tmxmapformat.cpp",
+        "tmxmapformat.h",
         "varianttomapconverter.cpp",
         "varianttomapconverter.h",
         "wangset.cpp",
         "wangset.h",
-        "worldmanager.cpp",
-        "worldmanager.h",
+        "world.cpp",
+        "world.h",
     ]
+
+    // Tag the source headers, so that the group below won't match generated
+    // artifacts like the moc files, which are also tagged with "hpp".
+    FileTagger {
+        patterns: "*.h"
+        fileTags: ["hpp", "public_hpp"]
+    }
 
     Group {
         condition: project.installHeaders
         qbs.install: true
         qbs.installDir: "include/tiled"
-        fileTagsFilter: "hpp"
+        fileTagsFilter: "public_hpp"
     }
 
     Export {
@@ -153,18 +207,17 @@ DynamicLibrary {
             submodules: ["gui"]
         }
 
-        cpp.includePaths: "."
+        cpp.includePaths: exportingProduct.sourceDirectory
     }
 
-    Group {
-        condition: !qbs.targetOS.contains("darwin")
-        qbs.install: true
-        qbs.installDir: {
-            if (qbs.targetOS.contains("windows"))
+    install: !qbs.targetOS.contains("darwin")
+    installDir: {
+        if (qbs.targetOS.contains("windows"))
+            if (project.windowsLayout)
                 return ""
             else
-                return "lib"
-        }
-        fileTagsFilter: "dynamiclibrary"
+                return "bin"
+        else
+            return project.libDir
     }
 }
